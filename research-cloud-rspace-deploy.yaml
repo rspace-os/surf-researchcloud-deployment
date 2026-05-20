@@ -1,21 +1,17 @@
-# PASS OPTIONS LIKE: -e "rspace_home=/home/ramon/docker-april-26-ansbile db_password=sdsS15ALLASFD34 rspace_url=https://myrspaceurl.com"
+# PASS OPTIONS LIKE: -e "rspace_home=/home/ramon/docker-april-26-ansbile rspace_url=https://myrspaceurl.com"
 # When deployed via SURF ResearchCloud, rspace_url is injected automatically as the bare
 # workspace FQDN (e.g. myworkspace.cloud.surf.nl) – the playbook will prepend https:// if needed.
+# db_password is auto-generated on first deploy and persisted in docker-compose.yaml.
 # The only mandatory option is rspace_url, the rest will use defaults below.
 # This uses the Docker Container SURF catalog item which pre-installs docker compose and nginx 
 ---
 - hosts: localhost
-  become: yes
   vars:
-    # default values if not specified
     rspace_home: "/etc/rspace-docker"
-    # this is a default random value and should really be changed or set as a paramater 
-    db_password: "L6vz2100zxaadutlsgsd"
-    # repo with all the config files
     repo_url: "https://github.com/rspace-os/rspace-docker.git"
-
+ 
   tasks:
-
+ 
     # ------------------------------------------------------------------
     # Normalise rspace_url: ResearchCloud passes workspace_fqdn as a bare
     # hostname (no scheme). Prepend https:// so the rest of the playbook
@@ -27,7 +23,7 @@
       when:
         - rspace_url is defined
         - not rspace_url.startswith('https://')
-
+ 
     - name: Ensure rspace_url was provided and starts with https://
       assert:
         that:
@@ -36,92 +32,151 @@
           - rspace_url is match('^https://')
         fail_msg: "rspace_url is required and must start with https://. Pass it with -e 'rspace_url=https://myrspaceurl.com'"
         quiet: yes
-
-
+ 
     - name: Ensure RSpace home directory exists
       file:
         path: "{{ rspace_home }}"
         state: directory
         mode: '0755'
-
+ 
     - name: Clone or update RSpace Docker repo
       git:
         repo: "{{ repo_url }}"
         dest: "{{ rspace_home }}"
         version: main
         force: yes
-
+ 
+    # ------------------------------------------------------------------
+    # Database password: generate on first deploy, reuse on subsequent runs.
+    # The password is persisted in docker-compose.yaml itself – no extra
+    # files needed. We detect a fresh deploy by checking whether the
+    # placeholder value "rspacedocker" is still present.
+    # ------------------------------------------------------------------
+    - name: Check if database password has already been set in docker-compose.yaml
+      shell: grep -c 'MARIADB_PASSWORD: rspacedocker' "{{ rspace_home }}/docker-compose.yaml" || true
+      register: default_password_present
+      changed_when: false
+ 
+    - name: Generate a random database password (first deploy only)
+      set_fact:
+        db_password: "{{ lookup('password', '/dev/null length=21 chars=ascii_letters,digits') }}"
+      when: default_password_present.stdout | int > 0
+ 
+    - name: Load existing password from docker-compose.yaml (subsequent deploys)
+      shell: grep 'MARIADB_PASSWORD:' "{{ rspace_home }}/docker-compose.yaml" | awk '{print $2}'
+      register: existing_password
+      changed_when: false
+      when: default_password_present.stdout | int == 0
+ 
+    - name: Set db_password fact from existing config
+      set_fact:
+        db_password: "{{ existing_password.stdout }}"
+      when: default_password_present.stdout | int == 0
+ 
+    # ------------------------------------------------------------------
+    # Root/admin password: same pattern as the app password above.
+    # Detected by the presence of the MARIADB_ROOT_PASSWORD placeholder.
+    # ------------------------------------------------------------------
+    - name: Check if root password has already been set in docker-compose.yaml
+      shell: grep -c 'MARIADB_ROOT_PASSWORD: rspacedocker' "{{ rspace_home }}/docker-compose.yaml" || true
+      register: default_root_password_present
+      changed_when: false
+ 
+    - name: Generate a random root password (first deploy only)
+      set_fact:
+        db_root_password: "{{ lookup('password', '/dev/null length=16 chars=ascii_letters,digits') }}"
+      when: default_root_password_present.stdout | int > 0
+ 
+    - name: Load existing root password from docker-compose.yaml (subsequent deploys)
+      shell: grep 'MARIADB_ROOT_PASSWORD:' "{{ rspace_home }}/docker-compose.yaml" | awk '{print $2}'
+      register: existing_root_password
+      changed_when: false
+      when: default_root_password_present.stdout | int == 0
+ 
+    - name: Set db_root_password fact from existing config
+      set_fact:
+        db_root_password: "{{ existing_root_password.stdout }}"
+      when: default_root_password_present.stdout | int == 0
+ 
+    # ------------------------------------------------------------------
+ 
     - name: Get latest RSpace OS version from GitHub
       shell: |
         curl -s "https://api.github.com/repos/rspace-os/rspace-web/releases" \
         | jq -r '.[0].tag_name'
       register: latest_version
       changed_when: false
-
+ 
     - name: Download latest RSpace .war file
       get_url:
         url: "https://github.com/rspace-os/rspace-web/releases/download/{{ latest_version.stdout }}/researchspace-{{ latest_version.stdout }}.war"
         dest: "{{ rspace_home }}/rspace.war"
         mode: '0644'
-
-    - name: Replace MariaDB password in docker-compose.yaml with variable specified
+ 
+    - name: Replace MariaDB password in docker-compose.yaml with generated password
       replace:
         path: "{{ rspace_home }}/docker-compose.yaml"
         regexp: 'MARIADB_PASSWORD: rspacedocker'
         replace: "MARIADB_PASSWORD: {{ db_password }}"
-
-    - name: Replace JDBC password in deployment.properties with variable specified
+ 
+    - name: Replace MariaDB root password in docker-compose.yaml with generated password
+      replace:
+        path: "{{ rspace_home }}/docker-compose.yaml"
+        regexp: 'MARIADB_ROOT_PASSWORD: rspacedocker'
+        replace: "MARIADB_ROOT_PASSWORD: {{ db_root_password }}"
+ 
+    - name: Replace JDBC password in deployment.properties with generated password
       replace:
         path: "{{ rspace_home }}/deployment.properties"
         regexp: 'jdbc.password=rspacedocker'
         replace: "jdbc.password={{ db_password }}"
-
+ 
     - name: Set hostname in deployment.properties
       replace:
         path: "{{ rspace_home }}/deployment.properties"
         regexp: 'server.urls.prefix=http://localhost:8080'
         replace: "server.urls.prefix={{ rspace_url }}"
-
+ 
     - name: Replace standard server.xml file with one with AJP enabled and HTTP disabled
       block:
         - name: Remove old file
           file:
             path: "{{ rspace_home }}/configs/server.xml"
             state: absent
-
-        - name: set new server xml file
+ 
+        - name: Set new server xml file
           copy:
             src: "{{ rspace_home }}/extras/server-xml-example-ajp.conf"
             dest: "{{ rspace_home }}/configs/server.xml"
-
+ 
     - name: Expose only AJP on localhost in docker-compose.yaml
       replace:
         path: "{{ rspace_home }}/docker-compose.yaml"
         regexp: "- '8080:8080'"
         replace: "- '127.0.0.1:8009:8009'"
-
+ 
     - name: Add SURF details to RSpace about popup
       lineinfile:
         path: "{{ rspace_home }}/deployment.properties"
         line: "deployment.description=This version of RSpace was installed as part of a SURF catalog item on SURF ResearchCloud. More information can be found under the catalog details in ResearchCloud or at https://researchspace.com/surf-research-cloud"
         insertafter: EOF
         state: present
-
-
+ 
+ 
     # ------------------------------------------------------------------
-    # RSPACE SETUP END. APACHE SETUP START
+    # RSPACE SETUP END. APACHE START
     # ------------------------------------------------------------------
-
+ 
     - name: Derive Apache hostname from rspace_url
       set_fact:
         apache_hostname: "{{ rspace_url | replace('https://', '') }}"
-
+ 
     - name: Check whether nginx is installed
       command: dpkg-query -W -f='${Status}' nginx
       register: nginx_pkg
       failed_when: false
       changed_when: false
-
+ 
     - name: Stop and disable nginx if installed
       systemd:
         name: nginx
@@ -129,7 +184,7 @@
         enabled: false
       when: "'install ok installed' in nginx_pkg.stdout"
       failed_when: false
-
+ 
     - name: Purge nginx packages
       apt:
         name:
@@ -143,7 +198,7 @@
         purge: yes
         autoremove: yes
       when: "'install ok installed' in nginx_pkg.stdout"
-
+ 
     - name: Kill anything still bound to ports 80 or 443
       shell: |
         set -e
@@ -152,17 +207,17 @@
           fuser -k 443/tcp || true
         fi
       changed_when: false
-
+ 
     - name: Update apt cache
       apt:
         update_cache: yes
         cache_valid_time: 3600
-
+ 
     - name: Install apache2
       apt:
         name: apache2
         state: present
-
+ 
     - name: Enable required Apache modules
       community.general.apache2_module:
         name: "{{ item }}"
@@ -176,13 +231,13 @@
         - headers
         - ssl
       notify: Restart apache2
-
+ 
     - name: Disable the default Apache site
       command: a2dissite 000-default
       args:
         removes: /etc/apache2/sites-enabled/000-default.conf
       notify: Restart apache2
-
+ 
     - name: Deploy RSpace Apache vhost
       copy:
         dest: "/etc/apache2/sites-available/{{ apache_hostname }}-rspace.conf"
@@ -195,7 +250,7 @@
               Redirect permanent / https://{{ apache_hostname }}/
               RemoteIPHeader X-Forwarded-For
           </VirtualHost>
-
+ 
           <VirtualHost *:443>
               ServerName {{ apache_hostname }}
               Protocols h2 http/1.1
@@ -212,21 +267,21 @@
               SSLCertificateKeyFile /etc/letsencrypt/live/{{ apache_hostname }}/privkey.pem
           </VirtualHost>
       notify: Restart apache2
-
+ 
     - name: Enable the RSpace Apache vhost
       command: "a2ensite {{ apache_hostname }}-rspace.conf"
       args:
         creates: "/etc/apache2/sites-enabled/{{ apache_hostname }}-rspace.conf"
       notify: Restart apache2
-
+ 
     - name: Ensure apache2 is enabled and started
       systemd:
         name: apache2
         state: started
         enabled: yes
-
+ 
     # ------------------------------------------------------------------
-
+ 
     - name: Start containers with Docker Compose (fallback if needed)
       shell: |
         if command -v docker &>/dev/null && docker compose version &>/dev/null; then
@@ -236,9 +291,10 @@
         fi
       args:
         chdir: "{{ rspace_home }}"
-
+ 
   handlers:
     - name: Restart apache2
       systemd:
         name: apache2
         state: restarted
+ 
