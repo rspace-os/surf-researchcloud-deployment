@@ -6,6 +6,7 @@
 # This uses the Docker Container SURF catalog item which pre-installs docker compose and nginx 
 ---
 - hosts: localhost
+  become: yes
   vars:
     rspace_home: "/etc/rspace-docker"
     repo_url: "https://github.com/rspace-os/rspace-docker.git"
