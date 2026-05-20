@@ -4,6 +4,7 @@
 # The only mandatory option is rspace_url, the rest will use defaults below.
 ---
 - hosts: localhost
+  become: yes
   vars:
     # default values if not specified
     rspace_home: "/etc/rspace-docker"
