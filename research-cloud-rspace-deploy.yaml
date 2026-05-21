@@ -148,10 +148,15 @@
         replace: "- '127.0.0.1:8443:8443'"
 
     - name: Mount letsencrypt certs into rspace-app container
-      lineinfile:
+      blockinfile:
         path: "{{ rspace_home }}/docker-compose.yaml"
-        insertafter: 'volumes:'
-        line: "- /etc/letsencrypt/live/{{ apache_hostname }}:/etc/rspace-docker/certs:ro"
+        insertbefore: '      ports:'
+        marker: "# {mark} ANSIBLE MANAGED CERTS SETUP"
+        block: |
+              - type: bind
+                source: /etc/letsencrypt/live/{{ apache_hostname }}
+                target: /etc/rspace-docker/certs
+                read_only: true
 
     - name: Add SURF details to RSpace about popup
       lineinfile:
