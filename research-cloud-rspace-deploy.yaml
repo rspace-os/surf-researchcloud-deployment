@@ -48,7 +48,7 @@
         enabled: yes
 
     # ------------------------------------------------------------------
-    # RSPACE SETUP
+    # RSPACE DOCKER CONFIG FOLDER SETUP
     # ------------------------------------------------------------------
     - name: Ensure RSpace home directory exists
       file:
@@ -63,58 +63,51 @@
         version: main
         force: yes
 
-    # ------------------------------------------------------------------
-    # Database password: generate on first deploy, reuse on subsequent runs.
-    # The password is persisted in docker-compose.yaml itself
-    # ------------------------------------------------------------------
-    - name: Check if database password has already been set in docker-compose.yaml
-      shell: |
-        grep -c 'MARIADB_PASSWORD: rspacedocker' "{{ rspace_home }}/docker-compose.yaml" || echo "0"
-      register: default_password_present
-      changed_when: false
-      failed_when: false
 
-    - name: Generate a random database password (first deploy only)
+
+    # ------------------------------------------------------------------
+    # Generate all the random passwords
+    # ------------------------------------------------------------------
+    - name: Generate a random database password
       set_fact:
         db_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-      when: default_password_present.stdout | int > 0
 
-    - name: Load existing password from docker-compose.yaml (subsequent deploys)
-      shell: grep 'MARIADB_PASSWORD:' "{{ rspace_home }}/docker-compose.yaml" | awk '{print $2}'
-      register: existing_password
-      changed_when: false
-      when: default_password_present.stdout | int == 0
-
-    - name: Set db_password fact from existing config
-      set_fact:
-        db_password: "{{ existing_password.stdout }}"
-      when: default_password_present.stdout | int == 0
-
-    # ------------------------------------------------------------------
-    # Root/admin mariradb password autogen just like last block
-    # ------------------------------------------------------------------
-    - name: Check if root password has already been set in docker-compose.yaml
-      shell: |
-        grep -c 'MARIADB_ROOT_PASSWORD: rspacedocker' "{{ rspace_home }}/docker-compose.yaml" || echo "0"
-      register: default_root_password_present
-      changed_when: false
-      failed_when: false
-
-    - name: Generate a random root password (first deploy only)
+    - name: Generate a random root password
       set_fact:
         db_root_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-      when: default_root_password_present.stdout | int > 0
 
-    - name: Load existing root password from docker-compose.yaml (subsequent deploys)
-      shell: grep 'MARIADB_ROOT_PASSWORD:' "{{ rspace_home }}/docker-compose.yaml" | awk '{print $2}'
-      register: existing_root_password
-      changed_when: false
-      when: default_root_password_present.stdout | int == 0
-
-    - name: Set db_root_password fact from existing config
+    - name: Generate a random JavaMelody password
       set_fact:
-        db_root_password: "{{ existing_root_password.stdout }}"
-      when: default_root_password_present.stdout | int == 0
+        javamelody_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+
+    # ------------------------------------------------------------------
+    # Replace password defaults with the just generated ones
+    # ------------------------------------------------------------------
+
+
+    - name: Replace MariaDB password in docker-compose.yaml
+      replace:
+        path: "{{ rspace_home }}/docker-compose.yaml"
+        regexp: 'MARIADB_PASSWORD: rspacedocker'
+        replace: "MARIADB_PASSWORD: {{ db_password }}"
+
+    - name: Replace MariaDB root password in docker-compose.yaml
+      replace:
+        path: "{{ rspace_home }}/docker-compose.yaml"
+        regexp: 'MARIADB_ROOT_PASSWORD: rspacedocker'
+        replace: "MARIADB_ROOT_PASSWORD: {{ db_root_password }}"
+
+    - name: Replace JDBC password in deployment.properties
+      replace:
+        path: "{{ rspace_home }}/deployment.properties"
+        regexp: 'jdbc.password=rspacedocker'
+        replace: "jdbc.password={{ db_password }}"
+
+    - name: Set JavaMelody monitoring password in rspace.env
+      replace:
+        path: "{{ rspace_home }}/config/rspace.env"
+        regexp: 'CATALINA_OPTS="\$CATALINA_OPTS -Djavamelody\.authorized-users=username:rspacedocker"'
+        replace: 'CATALINA_OPTS="$CATALINA_OPTS -Djavamelody.authorized-users=username:{{ javamelody_password }}"'
 
     # ------------------------------------------------------------------
 
@@ -130,24 +123,6 @@
         url: "https://github.com/rspace-os/rspace-web/releases/download/{{ latest_version.stdout }}/researchspace-{{ latest_version.stdout }}.war"
         dest: "{{ rspace_home }}/rspace.war"
         mode: '0644'
-
-    - name: Replace MariaDB password in docker-compose.yaml with generated password
-      replace:
-        path: "{{ rspace_home }}/docker-compose.yaml"
-        regexp: 'MARIADB_PASSWORD: rspacedocker'
-        replace: "MARIADB_PASSWORD: {{ db_password }}"
-
-    - name: Replace MariaDB root password in docker-compose.yaml with generated password
-      replace:
-        path: "{{ rspace_home }}/docker-compose.yaml"
-        regexp: 'MARIADB_ROOT_PASSWORD: rspacedocker'
-        replace: "MARIADB_ROOT_PASSWORD: {{ db_root_password }}"
-
-    - name: Replace JDBC password in deployment.properties with generated password
-      replace:
-        path: "{{ rspace_home }}/deployment.properties"
-        regexp: 'jdbc.password=rspacedocker'
-        replace: "jdbc.password={{ db_password }}"
 
     - name: Set hostname in deployment.properties
       replace:
