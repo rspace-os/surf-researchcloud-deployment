@@ -147,39 +147,6 @@
         regexp: "- '8080:8080'"
         replace: "- '127.0.0.1:8443:8443'"
 
-    # --------------------------------------------------------------------------
-    # Mount LE certs into rspace-app so they can be used on the http2 connector
-    # --------------------------------------------------------------------------
-
-    - name: Create rspace certs directory
-      file:
-        path: "{{ rspace_home }}/certs"
-        state: directory
-        mode: '0755'
-    
-    - name: Mount letsencrypt fullchain cert into rspace-app container
-      lineinfile:
-        path: "{{ rspace_home }}/docker-compose.yaml"
-        insertbefore: '      ports:'
-        line: "        - /etc/letsencrypt/live/{{ apache_hostname }}/fullchain.pem:/etc/rspace-docker/certs/fullchain.pem:ro"
-
-    - name: Mount letsencrypt cert into rspace-app container
-      lineinfile:
-        path: "{{ rspace_home }}/docker-compose.yaml"
-        insertbefore: '      ports:'
-        line: "        - /etc/letsencrypt/live/{{ apache_hostname }}/cert.pem:/etc/rspace-docker/certs/cert.pem:ro"
-
-    - name: Mount letsencrypt privkey into rspace-app container
-      lineinfile:
-        path: "{{ rspace_home }}/docker-compose.yaml"
-        insertbefore: '      ports:'
-        line: "        - /etc/letsencrypt/live/{{ apache_hostname }}/privkey.pem:/etc/rspace-docker/certs/privkey.pem:ro"
-
-    - name: Mount letsencrypt chain into rspace-app container
-      lineinfile:
-        path: "{{ rspace_home }}/docker-compose.yaml"
-        insertbefore: '      ports:'
-        line: "        - /etc/letsencrypt/live/{{ apache_hostname }}/chain.pem:/etc/rspace-docker/certs/chain.pem:ro"
 
     # --------------------------------------------------
     # Add custom SURF details in RSpace about page
@@ -193,6 +160,9 @@
         
     # -------------------------------------------------------
     # set the cert paths for http2 setup in tomcat container
+    # its ok to keep this here, tomcat will not look for the
+    # certs until it has booted and that docker command is
+    # right at the end
     # -------------------------------------------------------
 
     - name: Set cert key path in server.xml
@@ -321,6 +291,41 @@
         name: apache2
         state: started
         enabled: yes
+
+    # --------------------------------------------------------------------------
+    # Mount LE certs into rspace-app so they can be used on the http2 connector
+    # This has to be done after the certs have been generated
+    # --------------------------------------------------------------------------
+
+    - name: Create rspace certs directory
+      file:
+        path: "{{ rspace_home }}/certs"
+        state: directory
+        mode: '0755'
+    
+    - name: Mount letsencrypt fullchain cert into rspace-app container
+      lineinfile:
+        path: "{{ rspace_home }}/docker-compose.yaml"
+        insertbefore: '      ports:'
+        line: "        - /etc/letsencrypt/live/{{ apache_hostname }}/fullchain.pem:/etc/rspace-docker/certs/fullchain.pem:ro"
+
+    - name: Mount letsencrypt cert into rspace-app container
+      lineinfile:
+        path: "{{ rspace_home }}/docker-compose.yaml"
+        insertbefore: '      ports:'
+        line: "        - /etc/letsencrypt/live/{{ apache_hostname }}/cert.pem:/etc/rspace-docker/certs/cert.pem:ro"
+
+    - name: Mount letsencrypt privkey into rspace-app container
+      lineinfile:
+        path: "{{ rspace_home }}/docker-compose.yaml"
+        insertbefore: '      ports:'
+        line: "        - /etc/letsencrypt/live/{{ apache_hostname }}/privkey.pem:/etc/rspace-docker/certs/privkey.pem:ro"
+
+    - name: Mount letsencrypt chain into rspace-app container
+      lineinfile:
+        path: "{{ rspace_home }}/docker-compose.yaml"
+        insertbefore: '      ports:'
+        line: "        - /etc/letsencrypt/live/{{ apache_hostname }}/chain.pem:/etc/rspace-docker/certs/chain.pem:ro"
 
     # ------------------------------------------------------------------
     # START RSPACE CONTAINERS
