@@ -150,6 +150,12 @@
     # --------------------------------------------------------------------------
     # Mount LE certs into rspace-app so they can be used on the http2 connector
     # --------------------------------------------------------------------------
+
+    - name: Create rspace certs directory
+      file:
+        path: "{{ rspace_home }}/certs"
+        state: directory
+        mode: '0755'
     
     - name: Mount letsencrypt fullchain cert into rspace-app container
       lineinfile:
