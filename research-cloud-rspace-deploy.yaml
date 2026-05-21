@@ -105,7 +105,7 @@
 
     - name: Set JavaMelody monitoring password in rspace.env
       lineinfile:
-        path: "{{ rspace_home }}/configd/rspace.env"
+        path: "{{ rspace_home }}/configs/rspace.env"
         regexp: '.*javamelody\.authorized-users.*'
         line: 'CATALINA_OPTS="$CATALINA_OPTS -Djavamelody.authorized-users=rspacemonitoring:{{ javamelody_password }}"'
     # ------------------------------------------------------------------
