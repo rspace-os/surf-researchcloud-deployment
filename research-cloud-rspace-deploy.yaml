@@ -104,11 +104,10 @@
         replace: "jdbc.password={{ db_password }}"
 
     - name: Set JavaMelody monitoring password in rspace.env
-      replace:
-        path: "{{ rspace_home }}/configs/rspace.env"
-        regexp: 'CATALINA_OPTS="\$CATALINA_OPTS -Djavamelody\.authorized-users=username:rspacedocker"'
-        replace: 'CATALINA_OPTS="$CATALINA_OPTS -Djavamelody.authorized-users=rspacemonitoring:{{ javamelody_password }}"'
-
+      lineinfile:
+        path: "{{ rspace_home }}/configd/rspace.env"
+        regexp: '.*javamelody\.authorized-users.*'
+        line: 'CATALINA_OPTS="$CATALINA_OPTS -Djavamelody.authorized-users=rspacemonitoring:{{ javamelody_password }}"'
     # ------------------------------------------------------------------
 
     - name: Get latest RSpace OS version from GitHub
