@@ -72,8 +72,6 @@
     # ------------------------------------------------------------------
     # Database password: generate on first deploy, reuse on subsequent runs.
     # The password is persisted in docker-compose.yaml itself
-    # files needed. Fresh deploy checked by checking whether the
-    # placeholder value "rspacedocker" is still present.
     # ------------------------------------------------------------------
     - name: Check if database password has already been set in docker-compose.yaml
       shell: |
@@ -99,7 +97,7 @@
       when: default_password_present.stdout | int == 0
 
     # ------------------------------------------------------------------
-    # Root/admin mariradb password autogen
+    # Root/admin mariradb password autogen just like last block
     # ------------------------------------------------------------------
     - name: Check if root password has already been set in docker-compose.yaml
       shell: |
@@ -194,7 +192,7 @@
     #   1. Install Apache and certbot
     #   2. Stop Apache so port 80 is free for certbot standalone challenge
     #   3. Run certbot to obtain the cert
-    #   4. Deploy the vhost config (which references the cert paths)
+    #   4. Deploy the vhost config
     #   5. Start Apache with SSL working
     # ------------------------------------------------------------------
     - name: Kill anything bound to ports 80 or 443 before we start
