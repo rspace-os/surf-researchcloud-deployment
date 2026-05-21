@@ -138,14 +138,20 @@
 
         - name: Set new server xml file
           copy:
-            src: "{{ rspace_home }}/extras/server-xml-example-ajp.conf"
+            src: "{{ rspace_home }}/extras/server-xml-example-http2.conf"
             dest: "{{ rspace_home }}/configs/server.xml"
 
-    - name: Expose only AJP on localhost in docker-compose.yaml
+    - name: Expose only HTTP2 on localhost in docker-compose.yaml
       replace:
         path: "{{ rspace_home }}/docker-compose.yaml"
         regexp: "- '8080:8080'"
-        replace: "- '127.0.0.1:8009:8009'"
+        replace: "- '127.0.0.1:8443:8443'"
+
+    - name: Mount letsencrypt certs into rspace-app container
+      lineinfile:
+        path: "{{ rspace_home }}/docker-compose.yaml"
+        insertafter: 'volumes:'
+        line: "- /etc/letsencrypt/live/{{ apache_hostname }}:/etc/rspace-docker/certs:ro"
 
     - name: Add SURF details to RSpace about popup
       lineinfile:
@@ -153,6 +159,28 @@
         line: "deployment.description=This version of RSpace was installed as part of a SURF catalog item on SURF ResearchCloud. More information can be found under the catalog details in ResearchCloud or at https://documentation.researchspace.com/l/en/article/v1v7ew3e2q-surf-research-cloud"
         insertafter: EOF
         state: present
+        
+    # -------------------------------------------------------
+    # set the cert paths for http2 setup in tomcat container
+    # -------------------------------------------------------
+
+    - name: Set cert key path in server.xml
+      replace:
+        path: "{{ rspace_home }}/configs/server.xml"
+        regexp: 'certificateKeyFile="[^"]*"'
+        replace: 'certificateKeyFile="/etc/rspace-docker/certs/privkey.pem"'
+
+    - name: Set cert file path in server.xml
+      replace:
+        path: "{{ rspace_home }}/configs/server.xml"
+        regexp: 'certificateFile="[^"]*"'
+        replace: 'certificateFile="/etc/rspace-docker/certs/cert.pem"'
+
+    - name: Set cert chain file path in server.xml
+      replace:
+        path: "{{ rspace_home }}/configs/server.xml"
+        regexp: 'certificateChainFile="[^"]*"'
+        replace: 'certificateChainFile="/etc/rspace-docker/certs/chain.pem"'
 
     # ------------------------------------------------------------------
     # APACHE2 + CERTBOT INSTALL
@@ -187,7 +215,6 @@
         - http2
         - proxy
         - proxy_http
-        - proxy_ajp
         - headers
         - ssl
 
@@ -235,10 +262,14 @@
               SSLProxyEngine on
               RemoteIPHeader X-Forwarded-For
               ProxyPass /.well-known !
-              ProxyPass / ajp://127.0.0.1:8009/
-              ProxyPassReverse / ajp://127.0.0.1:8009/
+              ProxyPass / https://127.0.0.1:8443/
+              ProxyPassReverse / https://127.0.0.1:8443/
               SSLCertificateFile /etc/letsencrypt/live/{{ apache_hostname }}/fullchain.pem
               SSLCertificateKeyFile /etc/letsencrypt/live/{{ apache_hostname }}/privkey.pem
+              SSLProxyEngine on
+              SSLProxyVerify none
+              SSLProxyCheckPeerCN off
+              SSLProxyCheckPeerName off
           </VirtualHost>
 
     - name: Enable the RSpace Apache vhost
