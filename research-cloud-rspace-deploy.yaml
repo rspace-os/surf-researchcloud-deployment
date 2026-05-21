@@ -107,7 +107,7 @@
       replace:
         path: "{{ rspace_home }}/config/rspace.env"
         regexp: 'CATALINA_OPTS="\$CATALINA_OPTS -Djavamelody\.authorized-users=username:rspacedocker"'
-        replace: 'CATALINA_OPTS="$CATALINA_OPTS -Djavamelody.authorized-users=username:{{ javamelody_password }}"'
+        replace: 'CATALINA_OPTS="$CATALINA_OPTS -Djavamelody.authorized-users=rspacemonitoring:{{ javamelody_password }}"'
 
     # ------------------------------------------------------------------
 
