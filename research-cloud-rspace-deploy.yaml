@@ -2,36 +2,40 @@
 # When deployed via SURF ResearchCloud, rspace_url is injected automatically as the bare
 # workspace FQDN (e.g. myworkspace.cloud.surf.nl) the playbook will prepend https:// if needed.
 # db_password and db_root_password are both auto-generated on first deploy and persisted in docker-compose.yaml.
-# Docker is installed by this playbook,no separate Docker Environment component needed.
+# Docker is installed by this playbook, no separate Docker Environment component needed.
 # The only mandatory option is rspace_url, the rest will use defaults below.
+# storage_name should be the name of the SURF persistent volume (e.g. rspace-storage) — the mount path /data/<storage_name> is derived automatically.
 ---
 - hosts: localhost
   become: yes
   vars:
-    rspace_home: "/etc/rspace-docker"
     repo_url: "https://github.com/rspace-os/rspace-docker.git"
-
+    storage_path: "/data/{{ storage_name }}"
+    rspace_home: "/data/{{ storage_name }}/rspace-docker"
+ 
   tasks:
-
-    # ------------------------------------------------------------------
-    # Normalise rspace_url: ResearchCloud passes workspace_fqdn as a bare
-    # hostname. Prepend https:// so the rest of the playbook
-    # always has a fully-qualified URL to work with.
-    # ------------------------------------------------------------------
-
+ 
     - name: Derive hostnames from rspace_url
       set_fact:
         apache_hostname: "{{ rspace_url | replace('https://', '') }}"
-
+ 
     # ------------------------------------------------------------------
-    # DOCKER INSTALL
-    # docker.io and docker-compose-v2 are available directly from the ubuntu 24.04 repos
+    # VERIFY PERSISTENT STORAGE IS ATTACHED
+    # Fails immediately with a clear message if no volume is mounted at storage_path
     # ------------------------------------------------------------------
+    
+    - name: Verify persistent storage volume is attached
+      assert:
+        that:
+          - ansible_mounts | selectattr('mount', 'equalto', storage_path) | list | length > 0
+        fail_msg: "No storage volume is mounted at {{ storage_path }}. Please attach a persistent storage volume in the ResearchCloud portal before deploying."
+        quiet: yes
+ 
     - name: Update apt cache
       apt:
         update_cache: yes
         cache_valid_time: 3600
-
+ 
     - name: Install Docker and dependencies
       apt:
         name:
@@ -40,114 +44,136 @@
           - jq
           - git
         state: present
-
+ 
+    # ------------------------------------------------------------------
+    # PERSISTENT STORAGE SETUP
+    # Point Docker's data root at the SURF persistent volume so that
+    # named volumes survive workspace deletion and redeployment.
+    # skips config if storage check is already there
+    # ------------------------------------------------------------------
+    - name: Check if Docker data root is already configured
+      stat:
+        path: /etc/docker/storage-check.json
+      register: docker_daemon_config
+ 
+    - name: Configure Docker to store volumes on persistent storage
+      copy:
+        dest: /etc/docker/storage-check.json
+        content: |
+          {
+            "data-root": "{{ storage_path }}/docker"
+          }
+      when: not docker_daemon_config.stat.exists
+ 
     - name: Ensure Docker is enabled and started
       systemd:
         name: docker
         state: started
         enabled: yes
-
+ 
+    - name: Restart Docker to apply new data root
+      systemd:
+        name: docker
+        state: restarted
+      when: not docker_daemon_config.stat.exists
+ 
     # ------------------------------------------------------------------
     # RSPACE DOCKER CONFIG FOLDER SETUP
     # ------------------------------------------------------------------
+    
     - name: Ensure RSpace home directory exists
       file:
         path: "{{ rspace_home }}"
         state: directory
         mode: '0755'
-
+ 
     - name: Clone or update RSpace Docker repo
       git:
         repo: "{{ repo_url }}"
         dest: "{{ rspace_home }}"
         version: main
         force: yes
-
-
-
+ 
     # ------------------------------------------------------------------
     # Generate all the random passwords
     # ------------------------------------------------------------------
     - name: Generate a random database password
       set_fact:
         db_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-
+ 
     - name: Generate a random root password
       set_fact:
         db_root_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-
+ 
     - name: Generate a random JavaMelody password
       set_fact:
         javamelody_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-
+ 
     # ------------------------------------------------------------------
     # Replace password defaults with the just generated ones
     # ------------------------------------------------------------------
-
-
     - name: Replace MariaDB password in docker-compose.yaml
       replace:
         path: "{{ rspace_home }}/docker-compose.yaml"
         regexp: 'MARIADB_PASSWORD: rspacedocker'
         replace: "MARIADB_PASSWORD: {{ db_password }}"
-
+ 
     - name: Replace MariaDB root password in docker-compose.yaml
       replace:
         path: "{{ rspace_home }}/docker-compose.yaml"
         regexp: 'MARIADB_ROOT_PASSWORD: rspacedocker'
         replace: "MARIADB_ROOT_PASSWORD: {{ db_root_password }}"
-
+ 
     - name: Replace JDBC password in deployment.properties
       replace:
         path: "{{ rspace_home }}/deployment.properties"
         regexp: 'jdbc.password=rspacedocker'
         replace: "jdbc.password={{ db_password }}"
-
+ 
     - name: Set JavaMelody monitoring password in rspace.env
       lineinfile:
         path: "{{ rspace_home }}/configs/rspace.env"
         regexp: '.*javamelody\.authorized-users.*'
         line: 'CATALINA_OPTS="$CATALINA_OPTS -Djavamelody.authorized-users=rspacemonitoring:{{ javamelody_password }}"'
+ 
     # ------------------------------------------------------------------
-
     - name: Get latest RSpace OS version from GitHub
       shell: |
         curl -s "https://api.github.com/repos/rspace-os/rspace-web/releases" \
         | jq -r '.[0].tag_name'
       register: latest_version
       changed_when: false
-
+ 
     - name: Download latest RSpace .war file
       get_url:
         url: "https://github.com/rspace-os/rspace-web/releases/download/{{ latest_version.stdout }}/researchspace-{{ latest_version.stdout }}.war"
         dest: "{{ rspace_home }}/rspace.war"
         mode: '0644'
-
+ 
     - name: Set hostname in deployment.properties
       replace:
         path: "{{ rspace_home }}/deployment.properties"
         regexp: 'server.urls.prefix=http://localhost:8080'
         replace: "server.urls.prefix=https://{{ rspace_url }}"
-
-    - name: Replace standard server.xml file with one with AJP enabled and HTTP disabled
+ 
+    - name: Replace standard server.xml file with HTTP2 one
       block:
         - name: Remove old file
           file:
             path: "{{ rspace_home }}/configs/server.xml"
             state: absent
-
+ 
         - name: Set new server xml file
           copy:
             src: "{{ rspace_home }}/extras/server-xml-example-http2.conf"
             dest: "{{ rspace_home }}/configs/server.xml"
-
+ 
     - name: Expose only HTTP2 on localhost in docker-compose.yaml
       replace:
         path: "{{ rspace_home }}/docker-compose.yaml"
         regexp: "- '8080:8080'"
         replace: "- '127.0.0.1:8443:8443'"
-
-
+ 
     # --------------------------------------------------
     # Add custom SURF details in RSpace about page
     # --------------------------------------------------
@@ -157,7 +183,7 @@
         line: "deployment.description=This version of RSpace was installed as part of a SURF catalog item on SURF ResearchCloud. More information can be found under the catalog details in ResearchCloud or at https://documentation.researchspace.com/l/en/article/v1v7ew3e2q-surf-research-cloud"
         insertafter: EOF
         state: present
-        
+ 
     # -------------------------------------------------------
     # set the cert paths for http2 setup in tomcat container
     # its ok to keep this here, tomcat will not look for the
@@ -167,25 +193,24 @@
     # same path in the container so that tomcat container can
     # read them.
     # -------------------------------------------------------
-
     - name: Set cert key path in server.xml
       replace:
         path: "{{ rspace_home }}/configs/server.xml"
         regexp: 'certificateKeyFile="[^"]*"'
         replace: 'certificateKeyFile="/etc/rspace-docker/certs/privkey.pem"'
-
+ 
     - name: Set cert file path in server.xml
       replace:
         path: "{{ rspace_home }}/configs/server.xml"
         regexp: 'certificateFile="[^"]*"'
         replace: 'certificateFile="/etc/rspace-docker/certs/cert.pem"'
-
+ 
     - name: Set cert chain file path in server.xml
       replace:
         path: "{{ rspace_home }}/configs/server.xml"
         regexp: 'certificateChainFile="[^"]*"'
         replace: 'certificateChainFile="/etc/rspace-docker/certs/chain.pem"'
-
+ 
     # ------------------------------------------------------------------
     # APACHE2 + CERTBOT INSTALL
     # 
@@ -202,14 +227,14 @@
           fuser -k 443/tcp || true
         fi
       changed_when: false
-
+ 
     - name: Install Apache2 and certbot
       apt:
         name:
           - apache2
           - certbot
         state: present
-
+ 
     - name: Enable required Apache modules
       community.general.apache2_module:
         name: "{{ item }}"
@@ -221,17 +246,17 @@
         - proxy_http
         - headers
         - ssl
-
+ 
     - name: Disable the default Apache site
       command: a2dissite 000-default
       args:
         removes: /etc/apache2/sites-enabled/000-default.conf
-
+ 
     - name: Stop Apache so port 80 is free for certbot standalone challenge
       systemd:
         name: apache2
         state: stopped
-
+ 
     - name: Obtain Let's Encrypt certificate (standalone mode)
       command: >
         certbot certonly
@@ -242,7 +267,7 @@
         -d {{ apache_hostname }}
       args:
         creates: "/etc/letsencrypt/live/{{ apache_hostname }}/fullchain.pem"
-
+ 
     - name: Deploy RSpace Apache vhost with SSL
       copy:
         dest: "/etc/apache2/sites-available/{{ apache_hostname }}-rspace.conf"
@@ -255,7 +280,7 @@
               Redirect permanent / https://{{ apache_hostname }}/
               RemoteIPHeader X-Forwarded-For
           </VirtualHost>
-
+ 
           <VirtualHost *:443>
               ServerName {{ apache_hostname }}
               Protocols h2 http/1.1
@@ -275,12 +300,12 @@
               SSLProxyCheckPeerCN off
               SSLProxyCheckPeerName off
           </VirtualHost>
-
+ 
     - name: Enable the RSpace Apache vhost
       command: "a2ensite {{ apache_hostname }}-rspace.conf"
       args:
         creates: "/etc/apache2/sites-enabled/{{ apache_hostname }}-rspace.conf"
-
+ 
     - name: Set up certbot auto-renewal cron job
       cron:
         name: "certbot renewal"
@@ -288,24 +313,23 @@
         hour: "3"
         weekday: "1"
         job: "certbot renew --pre-hook 'systemctl stop apache2' --deploy-hook 'cp /etc/letsencrypt/live/{{ apache_hostname }}/*.pem /etc/rspace-docker/certs/ && docker compose -f /etc/rspace-docker/docker-compose.yaml restart rspace-app' --post-hook 'systemctl start apache2' --quiet"
-
+ 
     - name: Start and enable Apache2
       systemd:
         name: apache2
         state: started
         enabled: yes
-
+ 
     # --------------------------------------------------------------------------
     # Mount LE certs into rspace-app so they can be used on the http2 connector
     # This has to be done after the certs have been generated
     # --------------------------------------------------------------------------
-
     - name: Create rspace certs directory
       file:
         path: "{{ rspace_home }}/certs"
         state: directory
         mode: '0755'
-    
+ 
     - name: Copy LE certs into rspace certs directory
       copy:
         src: "/etc/letsencrypt/live/{{ apache_hostname }}/{{ item }}"
@@ -316,20 +340,20 @@
         - fullchain.pem
         - cert.pem
         - chain.pem
-
+ 
     - name: Copy LE privkey into rspace certs directory
       copy:
         src: "/etc/letsencrypt/live/{{ apache_hostname }}/privkey.pem"
         dest: "{{ rspace_home }}/certs/privkey.pem"
         remote_src: yes
         mode: '0640'
-
+ 
     - name: Mount rspace certs directory into rspace-app container
       lineinfile:
         path: "{{ rspace_home }}/docker-compose.yaml"
         insertbefore: '      ports:'
         line: "        - ./certs:/etc/rspace-docker/certs:ro"
-
+ 
     # ------------------------------------------------------------------
     # START RSPACE CONTAINERS
     # ------------------------------------------------------------------
@@ -342,7 +366,7 @@
         fi
       args:
         chdir: "{{ rspace_home }}"
-
+ 
   handlers:
     - name: Restart apache2
       systemd:
