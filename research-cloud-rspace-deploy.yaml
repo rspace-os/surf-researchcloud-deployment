@@ -73,6 +73,10 @@
         mv /var/lib/docker/volumes "{{ storage_path }}/docker-volumes"
       when: not docker_volumes_dir.stat.exists
  
+    - name: Remove default Docker volumes directory before symlinking
+      shell: |
+        rm -rf /var/lib/docker/volumes
+
     - name: Symlink Docker volumes directory to persistent storage
       file:
         src: "{{ storage_path }}/docker-volumes"
