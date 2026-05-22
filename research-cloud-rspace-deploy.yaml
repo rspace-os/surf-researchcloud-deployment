@@ -51,19 +51,11 @@
     # named volumes survive workspace deletion and redeployment.
     # skips config if storage check is already there
     # ------------------------------------------------------------------
-    - name: Check if Docker data root is already configured
+    
+    - name: Check if Docker volumes are already on persistent storage
       stat:
-        path: /etc/docker/storage-check.json
-      register: docker_daemon_config
- 
-    - name: Configure Docker to store volumes on persistent storage
-      copy:
-        dest: /etc/docker/storage-check.json
-        content: |
-          {
-            "data-root": "{{ storage_path }}/docker"
-          }
-      when: not docker_daemon_config.stat.exists
+        path: "{{ storage_path }}/docker-volumes"
+      register: docker_volumes_dir
  
     - name: Ensure Docker is enabled and started
       systemd:
@@ -71,11 +63,29 @@
         state: started
         enabled: yes
  
-    - name: Restart Docker to apply new data root
+    - name: Stop Docker to safely move volumes directory
       systemd:
         name: docker
-        state: restarted
-      when: not docker_daemon_config.stat.exists
+        state: stopped
+      when: not docker_volumes_dir.stat.exists
+ 
+    - name: Move Docker volumes directory to persistent storage
+      shell: |
+        mv /var/lib/docker/volumes "{{ storage_path }}/docker-volumes"
+      when: not docker_volumes_dir.stat.exists
+ 
+    - name: Symlink Docker volumes directory to persistent storage
+      file:
+        src: "{{ storage_path }}/docker-volumes"
+        dest: /var/lib/docker/volumes
+        state: link
+        force: yes
+ 
+    - name: Start Docker after volumes migration
+      systemd:
+        name: docker
+        state: started
+      when: not docker_volumes_dir.stat.exists
  
     # ------------------------------------------------------------------
     # RSPACE DOCKER CONFIG FOLDER SETUP
