@@ -12,9 +12,9 @@
     repo_url: "https://github.com/rspace-os/rspace-docker.git"
     storage_path: "/data/{{ storage_name }}"
     rspace_home: "/data/{{ storage_name }}/rspace-docker"
+    rspace_config: "/data/{{ storage_name }}/rspace-config"
  
   tasks:
- 
     - name: Derive hostnames from rspace_url
       set_fact:
         apache_hostname: "{{ rspace_url | replace('https://', '') }}"
@@ -23,7 +23,6 @@
     # VERIFY PERSISTENT STORAGE IS ATTACHED
     # Fails immediately with a clear message if no volume is mounted at storage_path
     # ------------------------------------------------------------------
-    
     - name: Verify persistent storage volume is attached
       assert:
         that:
@@ -31,6 +30,10 @@
         fail_msg: "No storage volume is mounted at {{ storage_path }}. Please attach a persistent storage volume in the ResearchCloud portal before deploying."
         quiet: yes
  
+    # ------------------------------------------------------------------
+    # DOCKER INSTALL
+    # docker.io and docker-compose-v2 are available directly from the ubuntu 24.04 repos
+    # ------------------------------------------------------------------
     - name: Update apt cache
       apt:
         update_cache: yes
@@ -47,11 +50,7 @@
  
     # ------------------------------------------------------------------
     # PERSISTENT STORAGE SETUP
-    # Point Docker's data root at the SURF persistent volume so that
-    # named volumes survive workspace deletion and redeployment.
-    # skips config if storage check is already there
     # ------------------------------------------------------------------
-    
     - name: Check if Docker volumes are already on persistent storage
       stat:
         path: "{{ storage_path }}/docker-volumes"
@@ -89,8 +88,9 @@
  
     # ------------------------------------------------------------------
     # RSPACE DOCKER CONFIG FOLDER SETUP
+    # rspace_home lives on the persistent volume so all config,
+    # passwords, certs and docker-compose.yaml survive workspace rebuilds.
     # ------------------------------------------------------------------
-    
     - name: Ensure RSpace home directory exists
       file:
         path: "{{ rspace_home }}"
@@ -103,6 +103,30 @@
         dest: "{{ rspace_home }}"
         version: main
         force: yes
+ 
+    # ------------------------------------------------------------------
+    # DEPLOYMENT.PROPERTIES
+    # Kept in rspace-config on the persistent volume, separate from
+    # rspace_home so it survives git clones which overwrite everything else.
+    # ------------------------------------------------------------------
+    - name: Ensure rspace-config directory exists on persistent storage
+      file:
+        path: "{{ rspace_config }}"
+        state: directory
+        mode: '0755'
+ 
+    - name: Copy deployment.properties to persistent config on first deploy
+      copy:
+        src: "{{ rspace_home }}/deployment.properties"
+        dest: "{{ rspace_config }}/deployment.properties"
+        remote_src: yes
+        force: no
+ 
+    - name: Update deployment.properties bind mount in docker-compose.yaml
+      replace:
+        path: "{{ rspace_home }}/docker-compose.yaml"
+        regexp: 'source: ./deployment.properties'
+        replace: "source: {{ rspace_config }}/deployment.properties"
  
     # ------------------------------------------------------------------
     # Generate all the random passwords
@@ -136,7 +160,7 @@
  
     - name: Replace JDBC password in deployment.properties
       replace:
-        path: "{{ rspace_home }}/deployment.properties"
+        path: "{{ rspace_config }}/deployment.properties"
         regexp: 'jdbc.password=rspacedocker'
         replace: "jdbc.password={{ db_password }}"
  
@@ -162,7 +186,7 @@
  
     - name: Set hostname in deployment.properties
       replace:
-        path: "{{ rspace_home }}/deployment.properties"
+        path: "{{ rspace_config }}/deployment.properties"
         regexp: 'server.urls.prefix=http://localhost:8080'
         replace: "server.urls.prefix=https://{{ rspace_url }}"
  
@@ -189,7 +213,7 @@
     # --------------------------------------------------
     - name: Add SURF details to RSpace about popup
       lineinfile:
-        path: "{{ rspace_home }}/deployment.properties"
+        path: "{{ rspace_config }}/deployment.properties"
         line: "deployment.description=This version of RSpace was installed as part of a SURF catalog item on SURF ResearchCloud. More information can be found under the catalog details in ResearchCloud or at https://documentation.researchspace.com/l/en/article/v1v7ew3e2q-surf-research-cloud"
         insertafter: EOF
         state: present
@@ -322,7 +346,7 @@
         minute: "0"
         hour: "3"
         weekday: "1"
-        job: "certbot renew --pre-hook 'systemctl stop apache2' --deploy-hook 'cp /etc/letsencrypt/live/{{ apache_hostname }}/*.pem /etc/rspace-docker/certs/ && docker compose -f /etc/rspace-docker/docker-compose.yaml restart rspace-app' --post-hook 'systemctl start apache2' --quiet"
+        job: "certbot renew --pre-hook 'systemctl stop apache2' --deploy-hook 'cp /etc/letsencrypt/live/{{ apache_hostname }}/*.pem {{ rspace_home }}/certs/ && docker compose -f {{ rspace_home }}/docker-compose.yaml restart rspace-app' --post-hook 'systemctl start apache2' --quiet"
  
     - name: Start and enable Apache2
       systemd:
