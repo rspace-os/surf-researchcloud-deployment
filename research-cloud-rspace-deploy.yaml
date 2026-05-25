@@ -191,7 +191,7 @@
     - name: Set hostname in deployment.properties
       replace:
         path: "{{ rspace_config }}/deployment.properties"
-        regexp: 'server.urls.prefix=http://localhost:8080'
+        regexp: 'server\.urls\.prefix=.*'
         replace: "server.urls.prefix=https://{{ rspace_url }}"
  
     - name: Replace standard server.xml file with HTTP2 one
