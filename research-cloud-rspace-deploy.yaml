@@ -218,8 +218,8 @@
     - name: Add SURF details to RSpace about popup
       lineinfile:
         path: "{{ rspace_config }}/deployment.properties"
-        line: "deployment.description=This version of RSpace was installed as part of a SURF catalog item on SURF ResearchCloud. More information can be found under the catalog details in ResearchCloud or at https://documentation.researchspace.com/l/en/article/v1v7ew3e2q-surf-research-cloud"
-        insertafter: EOF
+        regexp: "^deployment.description="
+        line: "deployment.description=This version of RSpace was installed as part of a SURF catalog item on SURF ResearchCloud. More information can be found under the catalog details in ResearchCloud or at http://documentation.researchspace.com/research-clouds"
         state: present
  
     # -------------------------------------------------------
