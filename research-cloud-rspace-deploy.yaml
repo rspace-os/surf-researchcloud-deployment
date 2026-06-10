@@ -92,9 +92,16 @@
  
     # ------------------------------------------------------------------
     # RSPACE DOCKER CONFIG FOLDER SETUP
-    # rspace_home lives on the persistent volume so all config,
-    # passwords, certs and docker-compose.yaml survive workspace rebuilds.
+    # rspace_home should be recreated on each deploy. This is to fetch 
+    # the latest docker compose, certs and config files. The d.p file
+    # is moved to rspace_config, so that integrations and other settings
+    # persist.
     # ------------------------------------------------------------------
+    - name: Delete the directory
+      ansible.builtin.file:
+        path: "{{ rspace_home }}"
+        state: absent
+    
     - name: Ensure RSpace home directory exists
       file:
         path: "{{ rspace_home }}"
