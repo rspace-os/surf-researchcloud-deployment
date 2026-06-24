@@ -1,10 +1,12 @@
 # PASS OPTIONS LIKE: -e "rspace_home=/home/ramon/docker-april-26-ansbile rspace_url=https://myrspaceurl.com"
 # When deployed via SURF ResearchCloud, rspace_url is injected automatically as the bare
 # workspace FQDN (e.g. myworkspace.cloud.surf.nl) the playbook will prepend https:// if needed.
-# db_password and db_root_password are both auto-generated on first deploy and persisted in docker-compose.yaml.
-# Docker is installed by this playbook, no separate Docker Environment component needed.
-# The only mandatory option is rspace_url, the rest will use defaults below.
-# storage_name should be the name of the SURF persistent volume (e.g. rspace-storage) — the mount path /data/<storage_name> is derived automatically.
+# jmelody_password, db_password and db_root_password are both auto-generated on first deploy and persisted in docker-compose.yaml.
+# Docker is installed by this playbook
+# The only mandatory option is rspace_url and storage_name
+# storage_name must be the name of the SURF persistent volume (e.g. rspace-storage) — the mount path /data/<storage_name> is derived automatically.
+# rspace_version_gh is optional. If provided, it must follow the format x.y.z (e.g. 2.1.0), without a leading 'v'.
+# If omitted, the playbook will fetch the latest release from GitHub automatically.
 ---
 - hosts: localhost
   become: yes
@@ -96,6 +98,15 @@
     # the latest docker compose, certs and config files. The d.p file
     # is moved to rspace_config, so that integrations and other settings
     # persist.
+    # force:yes ensures that the latest gh repo is always fetched, that
+    # is why d.p is moved as to not be overwritten. The db and jmelody pwds
+    # are randomly generated on each deploy so will be written into 
+    # docker compose each time.
+    #
+    # The volumes so rspace-media and rspace-db are kept in different dir
+    # to ensure they are not overwritten. It checks on first run and if 
+    # theres already volumes it doesn't move anything over, just runs 
+    # the syslinks.
     # ------------------------------------------------------------------
     - name: Delete the directory
       ansible.builtin.file:
@@ -182,16 +193,30 @@
         line: 'CATALINA_OPTS="$CATALINA_OPTS -Djavamelody.authorized-users=rspacemonitoring:{{ javamelody_password }}"'
  
     # ------------------------------------------------------------------
+    # Use rspace_version_gh if provided, otherwise fetch latest from GitHub.
+    # ------------------------------------------------------------------
     - name: Get latest RSpace OS version from GitHub
       shell: |
         curl -s "https://api.github.com/repos/rspace-os/rspace-web/releases" \
         | jq -r '.[0].tag_name'
-      register: latest_version
+      register: latest_version_api
       changed_when: false
- 
-    - name: Download latest RSpace .war file
+      when: rspace_version_gh is not defined or rspace_version_gh == ""
+
+    - name: Set resolved RSpace version fact
+      set_fact:
+        resolved_rspace_version: "{{ rspace_version_gh if (rspace_version_gh is defined and rspace_version_gh != '') else latest_version_api.stdout }}"
+
+    - name: Validate resolved RSpace version format
+      assert:
+        that:
+          - resolved_rspace_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+        fail_msg: "Invalid version format '{{ resolved_rspace_version }}'. Expected format is x.y.z (e.g. 2.1.0), without a leading 'v'."
+        quiet: yes
+
+    - name: Download RSpace .war file
       get_url:
-        url: "https://github.com/rspace-os/rspace-web/releases/download/{{ latest_version.stdout }}/researchspace-{{ latest_version.stdout }}.war"
+        url: "https://github.com/rspace-os/rspace-web/releases/download/{{ resolved_rspace_version }}/researchspace-{{ resolved_rspace_version }}.war"
         dest: "{{ rspace_home }}/rspace.war"
         mode: '0644'
  
