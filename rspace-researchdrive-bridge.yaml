@@ -1,0 +1,11 @@
+rspace-researchdrive-bridge:
+  image: rclone/rclone:latest
+  container_name: rspace-researchdrive-bridge
+  restart: unless-stopped
+  environment:
+    - NEXTCLOUD_BASE_URL={{ nextcloud_base_url }}
+  volumes:
+    - {{ researchdrive_bridge_dir }}/entrypoint.sh:/entrypoint.sh:ro
+    - {{ researchdrive_bridge_dir }}/auth_proxy.py:/auth_proxy.py
+    - {{ researchdrive_bridge_keys_dir }}:/data/keys
+  entrypoint: ["/bin/sh", "/entrypoint.sh"]
