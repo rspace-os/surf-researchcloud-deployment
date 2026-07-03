@@ -385,6 +385,9 @@
         path = "{{ rspace_home }}/docker-compose.yaml"
         with open(path) as f:
             data = yaml.safe_load(f)
+        for name, val in (data.get('volumes') or {}).items():
+            if val is None:
+                data['volumes'][name] = {}
         data['services']['rspace-researchdrive-bridge'] = {
             'image': 'rclone/rclone:latest',
             'container_name': 'rspace-researchdrive-bridge',
@@ -392,7 +395,7 @@
             'environment': ['NEXTCLOUD_BASE_URL={{ nextcloud_base_url }}'],
             'volumes': [
                 '{{ researchdrive_bridge_dir }}/entrypoint.sh:/entrypoint.sh:ro',
-                '{{ researchdrive_bridge_dir }}/auth_proxy.py:/auth_proxy.py',
+                '{{ researchdrive_bridge_dir }}/auth_proxy.py:/auth_proxy.py:ro',
                 '{{ researchdrive_bridge_keys_dir }}:/data/keys'
             ],
             'entrypoint': ['/bin/sh', '/entrypoint.sh']
