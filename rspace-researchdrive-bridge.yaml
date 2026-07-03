@@ -3,9 +3,9 @@ rspace-researchdrive-bridge:
   container_name: rspace-researchdrive-bridge
   restart: unless-stopped
   environment:
-    - NEXTCLOUD_BASE_URL={{ nextcloud_base_url }}
+    - NEXTCLOUD_BASE_URL=https://demo.data.surf.nl
   volumes:
-    - {{ researchdrive_bridge_dir }}/entrypoint.sh:/entrypoint.sh:ro
-    - {{ researchdrive_bridge_dir }}/auth_proxy.py:/auth_proxy.py
-    - {{ researchdrive_bridge_keys_dir }}:/data/keys
+    - RESEARCHDRIVE_ENTRYPOINT_PLACEHOLDER:/entrypoint.sh:ro
+    - RESEARCHDRIVE_AUTH_PROXY_PLACEHOLDER:/auth_proxy.py
+    - RESEARCHDRIVE_KEYS_DIR_PLACEHOLDER:/data/keys
   entrypoint: ["/bin/sh", "/entrypoint.sh"]
