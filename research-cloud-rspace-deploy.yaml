@@ -541,20 +541,16 @@
       args:
         chdir: "{{ rspace_home }}"
 
+    - name: Restart apache2
+      systemd:
+        name: apache2
+        state: restarted
+        
     # ------------------------------------------------------------------
     # SURF RESEARCH DRIVE SETUP IN RSPACE
     # Only runs once RSpace itself reports healthy, and only inserts
     # the row if it isn't already there (for redeploys)
     # ------------------------------------------------------------------
-    - name: Wait for RSpace application to report healthy status
-      uri:
-        url: "https://{{ apache_hostname }}/public/status"
-        validate_certs: no
-        return_content: yes
-      register: rspace_status
-      until: "'RSpace OK' in rspace_status.content"
-      retries: 60
-      delay: 10
 
     - name: Wait for ResearchDrive bridge SSH host key to be generated
       command: "docker exec rspace-researchdrive-bridge cat /data/keys/ssh_host_rsa_key.pub"
@@ -583,9 +579,3 @@
         "INSERT INTO NfsFileSystem (authType, clientType, disabled, name, url, authOptions, clientOptions, readAllowlist, writeAllowlist)
         VALUES ('PASSWORD', 'SFTP', '', 'SURF ResearchDrive', 'rspace-researchdrive-bridge:2022', '', 'SFTP_SERVER_PUBLIC_KEY={{ researchdrive_bridge_pubkey }}', NULL, NULL);"
       when: nfs_filesystem_count.stdout | trim == "0"
-
-  handlers:
-    - name: Restart apache2
-      systemd:
-        name: apache2
-        state: restarted
