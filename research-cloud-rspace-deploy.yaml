@@ -376,27 +376,30 @@
            
           print(json.dumps(config))
 
-    - name: Build ResearchDrive bridge service block
-      set_fact:
-        researchdrive_bridge_service_yaml: |
-          rspace-researchdrive-bridge:
-            image: rclone/rclone:latest
-            container_name: rspace-researchdrive-bridge
-            restart: unless-stopped
-            environment:
-              - NEXTCLOUD_BASE_URL={{ nextcloud_base_url }}
-            volumes:
-              - {{ researchdrive_bridge_dir }}/entrypoint.sh:/entrypoint.sh:ro
-              - {{ researchdrive_bridge_dir }}/auth_proxy.py:/auth_proxy.py
-              - {{ researchdrive_bridge_keys_dir }}:/data/keys
-            entrypoint: ["/bin/sh", "/entrypoint.sh"]
+      # had to use python for the yaml as the formatting was being really picky compared to the other .sh, .py and .conf files we copy
 
     - name: Add ResearchDrive bridge service to docker-compose.yaml
-      blockinfile:
-        path: "{{ rspace_home }}/docker-compose.yaml"
-        insertbefore: '^volumes:'
-        marker: "  # {mark} RESEARCHDRIVE BRIDGE SERVICE"
-        block: "{{ researchdrive_bridge_service_yaml | indent(2, True) }}"
+      shell: |
+        python3 - <<'PYEOF'
+        import yaml
+        path = "{{ rspace_home }}/docker-compose.yaml"
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        data['services']['rspace-researchdrive-bridge'] = {
+            'image': 'rclone/rclone:latest',
+            'container_name': 'rspace-researchdrive-bridge',
+            'restart': 'unless-stopped',
+            'environment': ['NEXTCLOUD_BASE_URL={{ nextcloud_base_url }}'],
+            'volumes': [
+                '{{ researchdrive_bridge_dir }}/entrypoint.sh:/entrypoint.sh:ro',
+                '{{ researchdrive_bridge_dir }}/auth_proxy.py:/auth_proxy.py',
+                '{{ researchdrive_bridge_keys_dir }}:/data/keys'
+            ],
+            'entrypoint': ['/bin/sh', '/entrypoint.sh']
+        }
+        with open(path, 'w') as f:
+            yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+        PYEOF
 
     # ------------------------------------------------------------------
     # APACHE2 + CERTBOT INSTALL
