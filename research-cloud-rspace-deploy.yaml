@@ -17,7 +17,7 @@
     rspace_home: "/data/{{ storage_name }}/rspace-docker"
     rspace_config: "/data/{{ storage_name }}/rspace-config"
     researchdrive_bridge_dir: "{{ rspace_home }}/researchdrive-bridge"
-    researchdrive_bridge_keys_dir: "{{ storage_path }}/researchdrive-bridge-keys"
+    researchdrive_bridge_keys_dir: "/data/{{ storage_name }}/researchdrive-bridge-keys"
     nextcloud_base_url: "https://demo.data.surf.nl"
 
   tasks:
@@ -295,41 +295,50 @@
         path: "{{ researchdrive_bridge_keys_dir }}"
         state: directory
         mode: '0755'
- 
+
     - name: Ensure ResearchDrive bridge scripts directory exists
       file:
         path: "{{ researchdrive_bridge_dir }}"
         state: directory
         mode: '0755'
- 
+
     - name: Download ResearchDrive bridge entrypoint.sh
       get_url:
         url: "https://raw.githubusercontent.com/rspace-os/surf-researchcloud-deployment/refs/heads/main/researchdrive-bridge-entrypoint.sh"
         dest: "{{ researchdrive_bridge_dir }}/entrypoint.sh"
         mode: '0755'
         force: yes
- 
+
     - name: Download ResearchDrive bridge auth_proxy.py
       get_url:
         url: "https://raw.githubusercontent.com/rspace-os/surf-researchcloud-deployment/refs/heads/main/researchdrive-bridge-auth-proxy.py"
         dest: "{{ researchdrive_bridge_dir }}/auth_proxy.py"
         mode: '0644'
         force: yes
- 
+
     - name: Download ResearchDrive bridge service snippet
       get_url:
         url: "https://raw.githubusercontent.com/rspace-os/surf-researchcloud-deployment/refs/heads/main/rspace-researchdrive-bridge.yaml"
         dest: "{{ researchdrive_bridge_dir }}/service-snippet.yaml"
         mode: '0644'
         force: yes
- 
+
+    - name: Set the bridge script and keys paths in the downloaded snippet
+      replace:
+        path: "{{ researchdrive_bridge_dir }}/service-snippet.yaml"
+        regexp: "{{ item.regexp }}"
+        replace: "{{ item.replace }}"
+      loop:
+        - { regexp: 'RESEARCHDRIVE_ENTRYPOINT_PLACEHOLDER', replace: "{{ researchdrive_bridge_dir }}/entrypoint.sh" }
+        - { regexp: 'RESEARCHDRIVE_AUTH_PROXY_PLACEHOLDER', replace: "{{ researchdrive_bridge_dir }}/auth_proxy.py" }
+        - { regexp: 'RESEARCHDRIVE_KEYS_DIR_PLACEHOLDER', replace: "{{ researchdrive_bridge_keys_dir }}" }
+
     - name: Add ResearchDrive bridge service to docker-compose.yaml
       blockinfile:
         path: "{{ rspace_home }}/docker-compose.yaml"
         insertbefore: '^volumes:'
         marker: "  # {mark} RESEARCHDRIVE BRIDGE SERVICE"
         block: "{{ lookup('file', researchdrive_bridge_dir + '/service-snippet.yaml') | indent(4, True) }}"
- 
 
     # ------------------------------------------------------------------
     # APACHE2 + CERTBOT INSTALL
