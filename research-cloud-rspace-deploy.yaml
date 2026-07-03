@@ -566,7 +566,7 @@
 
     - name: Store ResearchDrive bridge public key as a fact
       set_fact:
-        researchdrive_bridge_pubkey: "{{ bridge_pubkey_result.stdout }}"
+        researchdrive_bridge_pubkey: "{{ bridge_pubkey_result.stdout.split(' ')[1] }}"
 
     - name: Check if ResearchDrive File System already exists in RSpace database
       shell: >
