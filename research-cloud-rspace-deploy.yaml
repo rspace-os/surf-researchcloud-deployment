@@ -552,6 +552,14 @@
     # the row if it isn't already there (for redeploys)
     # ------------------------------------------------------------------
 
+    - name: Wait for RSpace application to report healthy status
+      shell: curl -sk --max-time 5 https://127.0.0.1:8443/public/status || true
+      register: rspace_status
+      until: "'RSpace OK' in rspace_status.stdout"
+      retries: 60
+      delay: 10
+      changed_when: false
+ 
     - name: Wait for ResearchDrive bridge SSH host key to be generated
       command: "docker exec rspace-researchdrive-bridge cat /data/keys/ssh_host_rsa_key.pub"
       register: bridge_pubkey_result
@@ -559,11 +567,11 @@
       retries: 12
       delay: 5
       changed_when: false
-
+ 
     - name: Store ResearchDrive bridge public key as a fact
       set_fact:
         researchdrive_bridge_pubkey: "{{ bridge_pubkey_result.stdout.split(' ')[1] }}"
-
+ 
     - name: Check if ResearchDrive File System already exists in RSpace database
       shell: >
         docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
@@ -571,7 +579,7 @@
         "SELECT COUNT(*) FROM NfsFileSystem WHERE name='SURF ResearchDrive';"
       register: nfs_filesystem_count
       changed_when: false
-
+ 
     - name: Insert ResearchDrive File System into RSpace database
       shell: >
         docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
