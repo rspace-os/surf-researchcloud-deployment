@@ -367,12 +367,12 @@
 
           print(json.dumps(config))
 
-    - name: Add ResearchDrive bridge service to docker-compose.yaml
-      blockinfile:
-        path: "{{ rspace_home }}/docker-compose.yaml"
-        insertafter: '^services:'
-        marker: "  # {mark} RESEARCHDRIVE BRIDGE CONTAINER"
-        block: |
+    - name: Write ResearchDrive bridge docker-compose.override.yaml
+      copy:
+        dest: "{{ rspace_home }}/docker-compose.override.yaml"
+        mode: '0644'
+        content: |
+          services:
             rspace-researchdrive-bridge:
               image: rclone/rclone:latest
               container_name: rspace-researchdrive-bridge
@@ -381,7 +381,7 @@
                 - NEXTCLOUD_BASE_URL={{ nextcloud_base_url }}
               volumes:
                 - {{ researchdrive_bridge_dir }}/entrypoint.sh:/entrypoint.sh:ro
-                - {{ researchdrive_bridge_dir }}/auth_proxy.py:/auth_proxy.py:ro
+                - {{ researchdrive_bridge_dir }}/auth_proxy.py:/auth_proxy.py
                 - {{ researchdrive_bridge_keys_dir }}:/data/keys
               entrypoint: ["/bin/sh", "/entrypoint.sh"]
 
@@ -570,7 +570,7 @@
 
     - name: Check if ResearchDrive File System already exists in RSpace database
       shell: >
-        docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T db
+        docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
         mariadb -uroot -p{{ db_root_password }} rspace -N -e
         "SELECT COUNT(*) FROM NfsFileSystem WHERE name='SURF ResearchDrive';"
       register: nfs_filesystem_count
@@ -578,7 +578,7 @@
 
     - name: Insert ResearchDrive File System into RSpace database
       shell: >
-        docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T db
+        docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
         mariadb -uroot -p{{ db_root_password }} rspace -e
         "INSERT INTO NfsFileSystem (authType, clientType, disabled, name, url, authOptions, clientOptions, readAllowlist, writeAllowlist)
         VALUES ('PASSWORD', 'SFTP', '', 'SURF ResearchDrive', 'rspace-researchdrive-bridge:2022', '', 'SFTP_SERVER_PUBLIC_KEY={{ researchdrive_bridge_pubkey }}', NULL, NULL);"
