@@ -18,6 +18,7 @@
     rspace_config: "/data/{{ storage_name }}/rspace-config"
     researchdrive_bridge_dir: "{{ rspace_home }}/researchdrive-bridge"
     researchdrive_bridge_keys_dir: "/data/{{ storage_name }}/researchdrive-bridge-keys"
+    db_cred_dir: "/data/{{ storage_name }}/.secrets/db-creds"
     nextcloud_base_url: "https://demo.data.surf.nl"
 
   tasks:
@@ -158,17 +159,38 @@
     # ------------------------------------------------------------------
     # Generate all the random passwords
     # ------------------------------------------------------------------
-    - name: Generate a random database password
+    - name: Ensure credentials directory exists
+      file:
+        path: "{{ db_cred_dir | dirname }}"
+        state: directory
+        mode: '0700'
+    
+    - name: Check if credentials file already exists
+      stat:
+        path: "{{ db_cred_dir }}"
+      register: db_cred_file_stat
+    
+    - name: Generate random credentials on first deploy
       set_fact:
         db_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-
-    - name: Generate a random root password
-      set_fact:
         db_root_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-
-    - name: Generate a random JavaMelody password
-      set_fact:
         javamelody_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when: not db_cred_file_stat.stat.exists
+    
+    - name: Persist generated credentials to file
+      copy:
+        dest: "{{ db_cred_dir }}"
+        content: |
+          db_password: "{{ db_password }}"
+          db_root_password: "{{ db_root_password }}"
+          javamelody_password: "{{ javamelody_password }}"
+        mode: '0600'
+      when: not db_cred_file_stat.stat.exists
+    
+    - name: Load existing credentials from file
+      include_vars:
+        file: "{{ db_cred_dir }}"
+      when: db_cred_file_stat.stat.exists
 
     # ------------------------------------------------------------------
     # Replace password defaults with the just generated ones
