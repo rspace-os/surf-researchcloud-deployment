@@ -553,7 +553,7 @@
       shell: >
         docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
         mariadb -urspacedocker -p{{ db_password }} rspace -N -e
-        "SELECT COUNT(*) FROM NfsFileSystem WHERE name='SURF ResearchDrive';"
+        "SELECT COUNT(*) FROM NfsFileSystem WHERE name='SURF Research Drive';"
       register: nfs_filesystem_count
       changed_when: false
  
@@ -562,5 +562,5 @@
         docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
         mariadb -urspacedocker -p{{ db_password }} rspace -e
         "INSERT INTO NfsFileSystem (authType, clientType, disabled, name, url, authOptions, clientOptions, readAllowlist, writeAllowlist)
-        VALUES ('PASSWORD', 'SFTP', '', 'SURF ResearchDrive', 'rspace-researchdrive-bridge:2022', '', 'SFTP_SERVER_PUBLIC_KEY={{ researchdrive_bridge_pubkey }}', NULL, NULL);"
+        VALUES ('PASSWORD', 'SFTP', '', 'SURF Research Drive', 'rspace-researchdrive-bridge:2022', '', 'SFTP_SERVER_PUBLIC_KEY={{ researchdrive_bridge_pubkey }}', NULL, NULL);"
       when: nfs_filesystem_count.stdout | trim == "0"
