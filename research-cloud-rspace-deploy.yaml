@@ -310,57 +310,13 @@
 
     # ------------------------------------------------------------------
     # RESEARCH DRIVE BRIDGE CONTAINER SETUP
-    # The SSH host key iS kept on the persistent volume, outside rspace_home,
+    # Main config is already in docker compose, replace nextcloud url with researchdrive one
     # ------------------------------------------------------------------
-    - name: Ensure ResearchDrive bridge persistent keys directory exists
-      file:
-        path: "{{ researchdrive_bridge_keys_dir }}"
-        state: directory
-        mode: '0755'
-
-    - name: Ensure ResearchDrive bridge scripts directory exists
-      file:
-        path: "{{ researchdrive_bridge_dir }}"
-        state: directory
-        mode: '0755'
-
-    - name: Download ResearchDrive bridge entrypoint.sh
-      get_url:
-        url: "https://raw.githubusercontent.com/rspace-os/surf-researchcloud-deployment/refs/heads/main/researchdrive-bridge-entrypoint.sh"
-        dest: "{{ researchdrive_bridge_dir }}/entrypoint.sh"
-        mode: '0755'
-        force: yes
-
-    - name: Download ResearchDrive bridge auth_proxy.py
-      get_url:
-        url: "https://raw.githubusercontent.com/rspace-os/surf-researchcloud-deployment/refs/heads/main/researchdrive-bridge-auth-proxy.py"
-        dest: "{{ researchdrive_bridge_dir }}/auth_proxy.py"
-        mode: '0644'
-        force: yes
-
-    - name: Download ResearchDrive bridge service snippet
-      get_url:
-        url: "https://raw.githubusercontent.com/rspace-os/surf-researchcloud-deployment/refs/heads/main/rspace-researchdrive-bridge.yaml"
-        dest: "{{ researchdrive_bridge_dir }}/service-snippet.yaml"
-        mode: '0644'
-        force: yes
-
-    - name: Set the bridge script and keys paths in the downloaded snippet
-      replace:
-        path: "{{ researchdrive_bridge_dir }}/service-snippet.yaml"
-        regexp: "{{ item.regexp }}"
-        replace: "{{ item.replace }}"
-      loop:
-        - { regexp: 'RESEARCHDRIVE_ENTRYPOINT_PLACEHOLDER', replace: "{{ researchdrive_bridge_dir }}/entrypoint.sh" }
-        - { regexp: 'RESEARCHDRIVE_AUTH_PROXY_PLACEHOLDER', replace: "{{ researchdrive_bridge_dir }}/auth_proxy.py" }
-        - { regexp: 'RESEARCHDRIVE_KEYS_DIR_PLACEHOLDER', replace: "{{ researchdrive_bridge_keys_dir }}" }
-
-    - name: Add ResearchDrive bridge service to docker-compose.yaml
-      blockinfile:
-        path: "{{ rspace_home }}/docker-compose.yaml"
-        insertbefore: '^volumes:'
-        marker: "  # {mark} RESEARCHDRIVE BRIDGE SERVICE"
-        block: "{{ lookup('file', researchdrive_bridge_dir + '/service-snippet.yaml') | indent(4, True) }}"
+    - name: Replace placeholder nextcloud url with surf one
+      ansible.builtin.replace:
+        path: {{ rspace_home }}/docker-compose.yaml
+        regexp: 'https://YOUR-NEXTCLOUD.URL'
+        replace: 'https://demo.data.surf.nl/'
 
     # ------------------------------------------------------------------
     # APACHE2 + CERTBOT INSTALL
@@ -538,7 +494,7 @@
       changed_when: false
  
     - name: Wait for ResearchDrive bridge SSH host key to be generated
-      command: "docker exec rspace-researchdrive-bridge cat /data/keys/ssh_host_rsa_key.pub"
+      command: "docker exec rspace-webdav-connector cat /data/keys/ssh_host_rsa_key.pub"
       register: bridge_pubkey_result
       until: bridge_pubkey_result.rc == 0
       retries: 12
@@ -562,5 +518,5 @@
         docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
         mariadb -urspacedocker -p{{ db_password }} rspace -e
         "INSERT INTO NfsFileSystem (authType, clientType, disabled, name, url, authOptions, clientOptions, readAllowlist, writeAllowlist)
-        VALUES ('PASSWORD', 'SFTP', '', 'SURF Research Drive', 'rspace-researchdrive-bridge:2022', '', 'SFTP_SERVER_PUBLIC_KEY={{ researchdrive_bridge_pubkey }}', NULL, NULL);"
+        VALUES ('PASSWORD', 'SFTP', '', 'SURF Research Drive', 'rspace-webdav-connector:2022', '', 'SFTP_SERVER_PUBLIC_KEY={{ researchdrive_bridge_pubkey }}', NULL, NULL);"
       when: nfs_filesystem_count.stdout | trim == "0"
