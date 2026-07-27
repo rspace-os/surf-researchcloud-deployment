@@ -314,7 +314,7 @@
     # ------------------------------------------------------------------
     - name: Replace placeholder nextcloud url with surf one
       ansible.builtin.replace:
-        path: {{ rspace_home }}/docker-compose.yaml
+        path: "{{ rspace_home }}/docker-compose.yaml"
         regexp: 'https://YOUR-NEXTCLOUD.URL'
         replace: 'https://demo.data.surf.nl/'
 
