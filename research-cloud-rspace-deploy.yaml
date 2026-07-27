@@ -19,7 +19,7 @@
     researchdrive_bridge_dir: "{{ rspace_home }}/researchdrive-bridge"
     researchdrive_bridge_keys_dir: "/data/{{ storage_name }}/researchdrive-bridge-keys"
     db_cred_dir: "/data/{{ storage_name }}/.secrets/db-creds"
-    nextcloud_base_url: "https://demo.data.surf.nl"
+    researchdrive_url: "https://demo.data.surf.nl"
 
   tasks:
     - name: Derive hostnames from rspace_url
@@ -316,7 +316,7 @@
       ansible.builtin.replace:
         path: "{{ rspace_home }}/docker-compose.yaml"
         regexp: 'https://YOUR-NEXTCLOUD.URL'
-        replace: 'https://demo.data.surf.nl/'
+        replace: '{{ researchdrive_url }}'
 
     # ------------------------------------------------------------------
     # APACHE2 + CERTBOT INSTALL
