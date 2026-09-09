@@ -19,12 +19,28 @@
     researchdrive_bridge_dir: "{{ rspace_home }}/researchdrive-bridge"
     researchdrive_bridge_keys_dir: "/data/{{ storage_name }}/researchdrive-bridge-keys"
     db_cred_dir: "/data/{{ storage_name }}/.secrets/db-creds"
-    researchdrive_url: "https://demo.data.surf.nl"
+    researchdrive_url_default: "researchdrive.surf.nl"
 
   tasks:
     - name: Derive hostnames from rspace_url
       set_fact:
         apache_hostname: "{{ rspace_url | replace('https://', '') }}"
+    
+    - name: Derive ResearchDrive hostname from user input
+      set_fact:
+        researchdrive_hostname: >-
+          {{ ('https://' ~ (
+                ((researchdrive_url | default('', true) | trim) or researchdrive_url_default)
+                | regex_replace('^[A-Za-z][A-Za-z0-9+.-]*://', '')
+                | regex_replace('^/+', '')
+             )) | urlsplit('hostname') }}
+
+    - name: Validate resolved ResearchDrive hostname
+      assert:
+        that:
+          - researchdrive_hostname is match('^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$')
+        fail_msg: "Invalid researchdrive_url '{{ researchdrive_url | default('') }}'. Expected a hostname such as demo.data.surf.nl or https://demo.data.surf.nl/."
+        quiet: yes
         
 
     # ------------------------------------------------------------------
@@ -316,7 +332,7 @@
       ansible.builtin.replace:
         path: "{{ rspace_home }}/docker-compose.yaml"
         regexp: 'https://YOUR-NEXTCLOUD.URL'
-        replace: '{{ researchdrive_url }}'
+        replace: "https://{{ researchdrive_hostname }}"
 
     # ------------------------------------------------------------------
     # APACHE2 + CERTBOT INSTALL
