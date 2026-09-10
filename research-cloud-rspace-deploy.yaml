@@ -525,10 +525,18 @@
       shell: >
         docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
         mariadb -urspacedocker -p{{ db_password }} rspace -N -e
-        "SELECT COUNT(*) FROM NfsFileSystem WHERE name='SURF Research Drive';"
+        "SELECT COUNT(*) FROM NfsFileSystem WHERE url='rspace-webdav-connector:2022';"
       register: nfs_filesystem_count
       changed_when: false
- 
+    
+    - name: Update existing ResearchDrive File System in RSpace database
+      shell: >
+        docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
+        mariadb -urspacedocker -p{{ db_password }} rspace -e
+        "UPDATE NfsFileSystem SET authType='PASSWORD', clientType='SFTP', disabled='', name='SURF Research Drive - {{ researchdrive_hostname }}', authOptions='', clientOptions='SFTP_SERVER_PUBLIC_KEY={{ researchdrive_bridge_pubkey }}'
+        WHERE url='rspace-webdav-connector:2022';"
+      when: nfs_filesystem_count.stdout | trim != "0"
+    
     - name: Insert ResearchDrive File System into RSpace database
       shell: >
         docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
