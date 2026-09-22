@@ -407,8 +407,8 @@
               Protocols h2 http/1.1
               ProxyRequests Off
               ProxyPreserveHost On
-              Header always set Strict-Transport-Security "max-age=600;"
-              Header edit Set-Cookie ^(.*)$ $1;SameSite=None
+              Header always set Strict-Transport-Security "max-age=31536000;"
+              Header always edit Set-Cookie ^(.*)$ "$1; SameSite=None; Secure"
               SSLProxyEngine on
               RemoteIPHeader X-Forwarded-For
               ProxyPass /.well-known !
