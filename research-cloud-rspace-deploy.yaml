@@ -86,11 +86,10 @@
         state: started
         enabled: yes
 
-    - name: Stop Docker to safely move volumes directory
+    - name: Stop Docker to safely move volumes directory or to reapply syslink
       systemd:
         name: docker
         state: stopped
-      when: not docker_volumes_dir.stat.exists
 
     - name: Move Docker volumes directory to persistent storage
       shell: |
@@ -108,11 +107,10 @@
         state: link
         force: yes
 
-    - name: Start Docker after volumes migration
+    - name: Start Docker after volumes migration or reapply syslink
       systemd:
         name: docker
         state: started
-      when: not docker_volumes_dir.stat.exists
 
     # ------------------------------------------------------------------
     # RSPACE DOCKER CONFIG FOLDER SETUP
