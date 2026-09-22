@@ -416,6 +416,7 @@
               ProxyPassReverse / https://127.0.0.1:8443/
               SSLCertificateFile /etc/letsencrypt/live/{{ apache_hostname }}/fullchain.pem
               SSLCertificateKeyFile /etc/letsencrypt/live/{{ apache_hostname }}/privkey.pem
+              SSLEngine on
               SSLProxyEngine on
               SSLProxyVerify none
               SSLProxyCheckPeerCN off
