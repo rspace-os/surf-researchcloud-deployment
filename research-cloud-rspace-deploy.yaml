@@ -22,8 +22,6 @@
     storage_path: "/data/{{ storage_name }}"
     rspace_home: "/data/{{ storage_name }}/rspace-docker"
     rspace_config: "/data/{{ storage_name }}/rspace-config"
-    researchdrive_bridge_dir: "{{ rspace_home }}/researchdrive-bridge"
-    researchdrive_bridge_keys_dir: "/data/{{ storage_name }}/researchdrive-bridge-keys"
     db_cred_dir: "/data/{{ storage_name }}/.secrets/db-creds"
     researchdrive_url_default: "researchdrive.surf.nl"
     nginx_rspace_location_conf: "/etc/nginx/app-location-conf.d/authentication.conf"  
@@ -209,7 +207,6 @@
         path: "{{ db_cred_dir }}"
       register: db_cred_file_stat
     
-     (modified): also generates backdoor_admin_password
     - name: Generate random credentials on first deploy
       set_fact:
         db_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
@@ -218,7 +215,6 @@
         backdoor_admin_password: "{{ lookup('password', '/dev/null length=12 chars=ascii_letters,digits') }}"
       when: not db_cred_file_stat.stat.exists
     
-     (modified): also persists backdoor_admin_password
     - name: Persist generated credentials to file
       copy:
         dest: "{{ db_cred_dir }}"
@@ -304,7 +300,6 @@
         regexp: '<Connector port="8080"'
         replace: '<Connector port="8080" proxyName="{{ apache_hostname }}" proxyPort="443" scheme="https" secure="true"'
 
-     (modified): was 127.0.0.1:8443:8443 for the HTTP2 connector
     - name: Expose only HTTP on localhost in docker-compose.yaml
       replace:
         path: "{{ rspace_home }}/docker-compose.yaml"
@@ -387,7 +382,6 @@
     # the row if it isn't already there (for redeploys)
     # ------------------------------------------------------------------
 
-     (modified): was https://127.0.0.1:8443
     - name: Wait for RSpace application to report healthy status
       shell: curl -s --max-time 5 http://127.0.0.1:8080/public/status || true
       register: rspace_status
