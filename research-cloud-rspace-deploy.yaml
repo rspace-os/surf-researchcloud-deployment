@@ -29,7 +29,7 @@
     backdoor_admin_username: "rspacebackdoor"  
     backdoor_admin_email: "rspacebackdoor@{{ apache_hostname }}"  
     backdoor_admin_marker: "/data/{{ storage_name }}/.secrets/backdoor-admin-created"  
-    src_nginx_session_cookie: "SET_ME"  #  name of the SRC-Nginx session cookie, cleared on logout
+    src_nginx_session_cookie: "Authorization"
 
   tasks:
     
