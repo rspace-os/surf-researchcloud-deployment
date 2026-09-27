@@ -8,6 +8,12 @@
 # rspace_version_gh is optional. If provided, it must follow the format x.y.z (e.g. 2.1.0), without a leading 'v'.
 # If omitted, the playbook will fetch the latest release from GitHub automatically.
 # nextcloud_base_url is hardcoded as a var at the top of this playbook, not passed as an extra-var.
+#  RSpace runs in SSO mode behind SRC-Nginx, which must come before this component in the catalog item
+# (SRC-OS, SRC-CO, SRC-Nginx, SRC-External, RSpace). SRC-Nginx handles 80/443, the certificate and the SRAM login.
+#  On first deploy a backdoor sysadmin is created and its credentials are printed at the end of the deployment log.
+# this script uses the default server xml file in rspace docker project now on port 8080
+#  rspace_auth is optional and can be "sso" (default) or "standalone". Standalone skips the SSO settings,
+# the backdoor sysadmin and the SRAM login, and RSpace uses its own login (sysadmin1) behind SRC-Nginx.
 ---
 - hosts: localhost
   become: yes
@@ -20,8 +26,27 @@
     researchdrive_bridge_keys_dir: "/data/{{ storage_name }}/researchdrive-bridge-keys"
     db_cred_dir: "/data/{{ storage_name }}/.secrets/db-creds"
     researchdrive_url_default: "researchdrive.surf.nl"
+    nginx_rspace_location_conf: "/etc/nginx/app-location-conf.d/authentication.conf"  
+    sso_unprotected_paths: "public|api|styles|scripts|resources|images|wopi|monitoring|ssoinfo|logout"  
+    backdoor_admin_username: "rspacebackdoor"  
+    backdoor_admin_email: "rspacebackdoor@{{ apache_hostname }}"  
+    backdoor_admin_marker: "/data/{{ storage_name }}/.secrets/backdoor-admin-created"  
+    src_nginx_session_cookie: "SET_ME"  #  name of the SRC-Nginx session cookie, cleared on logout
 
   tasks:
+    
+    - name: Resolve RSpace authentication mode
+      set_fact:
+        rspace_auth_mode: "{{ rspace_auth | default('sso', true) | trim | lower }}"
+
+    
+    - name: Validate RSpace authentication mode
+      assert:
+        that:
+          - rspace_auth_mode in ['sso', 'standalone']
+        fail_msg: "Invalid rspace_auth '{{ rspace_auth }}'. Expected sso or standalone."
+        quiet: yes
+
     - name: Derive hostnames from rspace_url
       set_fact:
         apache_hostname: "{{ rspace_url | replace('https://', '') }}"
@@ -184,13 +209,16 @@
         path: "{{ db_cred_dir }}"
       register: db_cred_file_stat
     
+     (modified): also generates backdoor_admin_password
     - name: Generate random credentials on first deploy
       set_fact:
         db_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
         db_root_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
         javamelody_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+        backdoor_admin_password: "{{ lookup('password', '/dev/null length=12 chars=ascii_letters,digits') }}"
       when: not db_cred_file_stat.stat.exists
     
+     (modified): also persists backdoor_admin_password
     - name: Persist generated credentials to file
       copy:
         dest: "{{ db_cred_dir }}"
@@ -198,6 +226,7 @@
           db_password: "{{ db_password }}"
           db_root_password: "{{ db_root_password }}"
           javamelody_password: "{{ javamelody_password }}"
+          backdoor_admin_password: "{{ backdoor_admin_password }}"
         mode: '0600'
       when: not db_cred_file_stat.stat.exists
     
@@ -267,23 +296,20 @@
         regexp: 'server\.urls\.prefix=.*'
         replace: "server.urls.prefix=https://{{ rspace_url }}"
 
-    - name: Replace standard server.xml file with HTTP2 one
-      block:
-        - name: Remove old file
-          file:
-            path: "{{ rspace_home }}/configs/server.xml"
-            state: absent
+    #  Nginx proxies plain HTTP to Tomcat on loopback, so Tomcat is told the public
+    # host, port and scheme to build https:// redirects and URLs.
+    - name: Make the Tomcat HTTP connector aware it sits behind HTTPS
+      replace:
+        path: "{{ rspace_home }}/configs/server.xml"
+        regexp: '<Connector port="8080"'
+        replace: '<Connector port="8080" proxyName="{{ apache_hostname }}" proxyPort="443" scheme="https" secure="true"'
 
-        - name: Set new server xml file
-          copy:
-            src: "{{ rspace_home }}/extras/server-xml-example-http2.conf"
-            dest: "{{ rspace_home }}/configs/server.xml"
-
-    - name: Expose only HTTP2 on localhost in docker-compose.yaml
+     (modified): was 127.0.0.1:8443:8443 for the HTTP2 connector
+    - name: Expose only HTTP on localhost in docker-compose.yaml
       replace:
         path: "{{ rspace_home }}/docker-compose.yaml"
         regexp: "- '8080:8080'"
-        replace: "- '127.0.0.1:8443:8443'"
+        replace: "- '127.0.0.1:8080:8080'"
 
     # --------------------------------------------------
     # Add custom SURF details in RSpace about page
@@ -292,35 +318,45 @@
       lineinfile:
         path: "{{ rspace_config }}/deployment.properties"
         regexp: "^deployment.description="
-        line: "deployment.description=This version of RSpace was installed as part of a SURF catalog item on SURF ResearchCloud. More information can be found under the catalog details in ResearchCloud or at https://documentation.researchspace.com/research-clouds"
+        line: "deployment.description=This version of RSpace was installed as part of a SURF catalog item on SURF Research Cloud. More information can be found under the catalog details in Research Cloud or at https://documentation.researchspace.com/research-clouds"
         state: present
 
-    # -------------------------------------------------------
-    # set the cert paths for http2 setup in tomcat container
-    # its ok to keep this here, tomcat will not look for the
-    # certs until it has booted and that docker command is
-    # right at the end. Bear in mind that the certs are kept
-    # at /etc/rspace-docker/certs on the host, but also that
-    # same path in the container so that tomcat container can
-    # read them.
-    # -------------------------------------------------------
-    - name: Set cert key path in server.xml
-      replace:
-        path: "{{ rspace_home }}/configs/server.xml"
-        regexp: 'certificateKeyFile="[^"]*"'
-        replace: 'certificateKeyFile="/etc/rspace-docker/certs/privkey.pem"'
+    # ------------------------------------------------------------------
+    #  SSO SETTINGS IN DEPLOYMENT.PROPERTIES
+    # RSpace reads the SRAM username from the OIDC_CLAIM_username header
+    # set by Nginx. Name and email are filled in by the user at signup.
+    # adminLogin enables /adminLogin for the backdoor sysadmin.
+    # Only applied when rspace_auth_mode is sso.
+    # ------------------------------------------------------------------
+    - name: Set SSO properties in deployment.properties
+      lineinfile:
+        path: "{{ rspace_config }}/deployment.properties"
+        regexp: "^{{ item.key | regex_escape }}="
+        line: "{{ item.key }}={{ item.value }}"
+      loop:
+        - { key: 'deployment.sso.type', value: 'openid' }
+        - { key: 'deployment.sso.openid.usernameClaim', value: 'OIDC_CLAIM_username' }
+        - { key: 'deployment.sso.adminLogin.enabled', value: 'true' }
+        - { key: 'user.signup', value: 'true' }
+        - { key: 'deployment.standalone', value: 'false' }
+        - { key: 'deployment.sso.backdoorUserCreation.enabled', value: 'true' }
+        - { key: 'deployment.sso.logout.url', value: '/sramlogout' }
+      when: rspace_auth_mode == 'sso'
 
-    - name: Set cert file path in server.xml
-      replace:
-        path: "{{ rspace_home }}/configs/server.xml"
-        regexp: 'certificateFile="[^"]*"'
-        replace: 'certificateFile="/etc/rspace-docker/certs/cert.pem"'
+    
+    - name: Use RSpace's own login in standalone mode
+      lineinfile:
+        path: "{{ rspace_config }}/deployment.properties"
+        regexp: '^deployment\.standalone='
+        line: "deployment.standalone=true"
+      when: rspace_auth_mode == 'standalone'
 
-    - name: Set cert chain file path in server.xml
-      replace:
-        path: "{{ rspace_home }}/configs/server.xml"
-        regexp: 'certificateChainFile="[^"]*"'
-        replace: 'certificateChainFile="/etc/rspace-docker/certs/chain.pem"'
+    - name: Check whether the backdoor sysadmin has already been created
+      stat:
+        path: "{{ backdoor_admin_marker }}"
+      register: backdoor_admin_marker_stat
+
+
 
     # ------------------------------------------------------------------
     # RESEARCH DRIVE BRIDGE CONTAINER SETUP
@@ -331,150 +367,6 @@
         path: "{{ rspace_home }}/docker-compose.yaml"
         regexp: 'https://YOUR-NEXTCLOUD.URL'
         replace: "https://{{ researchdrive_hostname }}"
-
-    # ------------------------------------------------------------------
-    # APACHE2 + CERTBOT INSTALL
-    #
-    #   1. Install Apache and certbot
-    #   2. Stop Apache so port 80 is free for certbot standalone challenge
-    #   3. Run certbot to obtain the cert
-    #   4. Deploy the vhost config
-    #   5. Start Apache with SSL working
-    # ------------------------------------------------------------------
-    - name: Kill anything bound to ports 80 or 443 before we start
-      shell: |
-        if command -v fuser >/dev/null 2>&1; then
-          fuser -k 80/tcp || true
-          fuser -k 443/tcp || true
-        fi
-      changed_when: false
-
-    - name: Install Apache2 and certbot
-      apt:
-        name:
-          - apache2
-          - certbot
-        state: present
-
-    - name: Enable required Apache modules
-      community.general.apache2_module:
-        name: "{{ item }}"
-        state: present
-      loop:
-        - remoteip
-        - http2
-        - proxy
-        - proxy_http
-        - headers
-        - ssl
-
-    - name: Disable the default Apache site
-      command: a2dissite 000-default
-      args:
-        removes: /etc/apache2/sites-enabled/000-default.conf
-
-    - name: Stop Apache so port 80 is free for certbot standalone challenge
-      systemd:
-        name: apache2
-        state: stopped
-
-    - name: Obtain Let's Encrypt certificate (standalone mode)
-      command: >
-        certbot certonly
-        --standalone
-        --non-interactive
-        --agree-tos
-        --register-unsafely-without-email
-        -d {{ apache_hostname }}
-      args:
-        creates: "/etc/letsencrypt/live/{{ apache_hostname }}/fullchain.pem"
-
-    - name: Deploy RSpace Apache vhost with SSL
-      copy:
-        dest: "/etc/apache2/sites-available/{{ apache_hostname }}-rspace.conf"
-        owner: root
-        group: root
-        mode: '0644'
-        content: |
-          <VirtualHost *:80>
-              ServerName {{ apache_hostname }}
-              Redirect permanent / https://{{ apache_hostname }}/
-              RemoteIPHeader X-Forwarded-For
-          </VirtualHost>
-
-          <VirtualHost *:443>
-              ServerName {{ apache_hostname }}
-              Protocols h2 http/1.1
-              ProxyRequests Off
-              ProxyPreserveHost On
-              Header always set Strict-Transport-Security "max-age=31536000;"
-              Header always edit Set-Cookie ^(.*)$ "$1; SameSite=None; Secure"
-              SSLProxyEngine on
-              RemoteIPHeader X-Forwarded-For
-              ProxyPass /.well-known !
-              ProxyPass / https://127.0.0.1:8443/
-              ProxyPassReverse / https://127.0.0.1:8443/
-              SSLCertificateFile /etc/letsencrypt/live/{{ apache_hostname }}/fullchain.pem
-              SSLCertificateKeyFile /etc/letsencrypt/live/{{ apache_hostname }}/privkey.pem
-              SSLEngine on
-              SSLProxyEngine on
-              SSLProxyVerify none
-              SSLProxyCheckPeerCN off
-              SSLProxyCheckPeerName off
-          </VirtualHost>
-
-    - name: Enable the RSpace Apache vhost
-      command: "a2ensite {{ apache_hostname }}-rspace.conf"
-      args:
-        creates: "/etc/apache2/sites-enabled/{{ apache_hostname }}-rspace.conf"
-
-    - name: Set up certbot auto-renewal cron job
-      cron:
-        name: "certbot renewal"
-        minute: "0"
-        hour: "3"
-        weekday: "1"
-        job: "certbot renew --pre-hook 'systemctl stop apache2' --deploy-hook 'cp /etc/letsencrypt/live/{{ apache_hostname }}/*.pem {{ rspace_home }}/certs/ && docker compose -f {{ rspace_home }}/docker-compose.yaml restart rspace-app' --post-hook 'systemctl start apache2' --quiet"
-
-    - name: Start and enable Apache2
-      systemd:
-        name: apache2
-        state: started
-        enabled: yes
-
-    # --------------------------------------------------------------------------
-    # Mount LE certs into rspace-app so they can be used on the http2 connector
-    # This has to be done after the certs have been generated
-    # --------------------------------------------------------------------------
-    - name: Create rspace certs directory
-      file:
-        path: "{{ rspace_home }}/certs"
-        state: directory
-        mode: '0755'
-
-    - name: Copy LE certs into rspace certs directory
-      copy:
-        src: "/etc/letsencrypt/live/{{ apache_hostname }}/{{ item }}"
-        dest: "{{ rspace_home }}/certs/{{ item }}"
-        remote_src: yes
-        mode: '0644'
-      loop:
-        - fullchain.pem
-        - cert.pem
-        - chain.pem
-
-    - name: Copy LE privkey into rspace certs directory
-      copy:
-        src: "/etc/letsencrypt/live/{{ apache_hostname }}/privkey.pem"
-        dest: "{{ rspace_home }}/certs/privkey.pem"
-        remote_src: yes
-        mode: '0640'
-
-    - name: Mount rspace certs directory into rspace-app container
-      lineinfile:
-        path: "{{ rspace_home }}/docker-compose.yaml"
-        insertbefore: '      ports:'
-        line: "        - ./certs:/etc/rspace-docker/certs:ro"
 
     # ------------------------------------------------------------------
     # START RSPACE CONTAINERS
@@ -488,11 +380,6 @@
         fi
       args:
         chdir: "{{ rspace_home }}"
-
-    - name: Restart apache2
-      systemd:
-        name: apache2
-        state: restarted
         
     # ------------------------------------------------------------------
     # SURF RESEARCH DRIVE SETUP IN RSPACE
@@ -500,8 +387,9 @@
     # the row if it isn't already there (for redeploys)
     # ------------------------------------------------------------------
 
+     (modified): was https://127.0.0.1:8443
     - name: Wait for RSpace application to report healthy status
-      shell: curl -sk --max-time 5 https://127.0.0.1:8443/public/status || true
+      shell: curl -s --max-time 5 http://127.0.0.1:8080/public/status || true
       register: rspace_status
       until: "'RSpace OK' in rspace_status.stdout"
       retries: 60
@@ -543,3 +431,135 @@
         "INSERT INTO NfsFileSystem (authType, clientType, disabled, name, url, authOptions, clientOptions, readAllowlist, writeAllowlist)
         VALUES ('PASSWORD', 'SFTP', '', 'SURF Research Drive - {{ researchdrive_hostname }}', 'rspace-webdav-connector:2022', '', 'SFTP_SERVER_PUBLIC_KEY={{ researchdrive_bridge_pubkey }}', NULL, NULL);"
       when: nfs_filesystem_count.stdout | trim == "0"
+
+    # ------------------------------------------------------------------
+    #  BACKDOOR SYSADMIN (first deploy only)
+    # The account is inserted straight into the database only if sso enabled and the account hasn't been made before
+    # ------------------------------------------------------------------
+    - name: Create the backdoor sysadmin
+      when: rspace_auth_mode == 'sso' and not backdoor_admin_marker_stat.stat.exists
+      block:
+        - name: Check whether the backdoor account already exists
+          shell: >
+            docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
+            mariadb -urspacedocker -p{{ db_password }} rspace -N -e
+            "SELECT COUNT(*) FROM User WHERE username='{{ backdoor_admin_username }}';"
+          register: backdoor_user_count
+          changed_when: false
+
+        - name: Insert the backdoor sysadmin into the RSpace database
+          shell: >
+            docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
+            mariadb -urspacedocker -p{{ db_password }} rspace -e
+            "START TRANSACTION;
+            SET @id = GREATEST(
+              COALESCE((SELECT next_val FROM hibernate_sequences WHERE sequence_name='AbstractUserOrGroupImpl'), 1),
+              (SELECT COALESCE(MAX(id), 0) + 1 FROM User),
+              (SELECT COALESCE(MAX(id), 0) + 1 FROM rsGroup));
+            INSERT INTO User (id, version, account_expired, account_locked, contentInitialized, credentials_expired,
+              email, account_enabled, first_name, last_name, numConsecutiveLoginFailures, password, salt, username,
+              tempAccount, signupSource, creationDate, affiliation, allowedPiRole)
+            VALUES (@id, 0, b'0', b'0', b'0', b'0',
+              '{{ backdoor_admin_email }}', b'1', 'RSpace', 'Backdoor Admin', 0, '{{ backdoor_admin_password | hash('sha256') }}', NULL, '{{ backdoor_admin_username }}',
+              b'0', 'SSO_BACKDOOR', NOW(), 'SURF ResearchCloud', b'0');
+            INSERT INTO user_role (user_id, role_id) SELECT @id, id FROM roles WHERE name='ROLE_SYSADMIN';
+            UPDATE hibernate_sequences SET next_val = @id + 1 WHERE sequence_name='AbstractUserOrGroupImpl';
+            INSERT INTO hibernate_sequences (sequence_name, next_val)
+              SELECT 'AbstractUserOrGroupImpl', @id + 1 FROM DUAL
+              WHERE NOT EXISTS (SELECT 1 FROM hibernate_sequences WHERE sequence_name='AbstractUserOrGroupImpl');
+            COMMIT;"
+          when: backdoor_user_count.stdout | trim == "0"
+
+        - name: Record that the backdoor sysadmin exists
+          copy:
+            dest: "{{ backdoor_admin_marker }}"
+            content: "{{ backdoor_admin_username }}\n"
+            mode: '0600'
+
+    # ------------------------------------------------------------------
+    #  NGINX LOCATION
+    # SRC-Nginx includes authentication.conf in its HTTPS server block (see
+    # SURF's "Web Apps via Nginx" demo). The RSpace locations are kept
+    # between BEGIN/END RSPACE markers, so a redeploy replaces the block
+    # instead of appending a second copy.
+    # Paths in sso_unprotected_paths (public pages, static files, API,
+    # WOPI, JavaMelody, logout) skips the SRAM login. Everything else goes
+    # through SURF's auth_request /validate check, and the SRAM username
+    # is passed to RSpace in the OIDC_CLAIM_username header.
+    # ------------------------------------------------------------------
+    - name: Deploy RSpace Nginx location for SURF SRAM login
+      blockinfile:
+        path: "{{ nginx_rspace_location_conf }}"
+        marker: "# {mark} RSPACE"
+        block: |
+          location = /sramlogout {
+              add_header Set-Cookie "{{ src_nginx_session_cookie }}=; Path=/; Max-Age=0; Secure; HttpOnly" always;
+              return 302 /public/ssologout;
+          }
+
+          location ~ ^/({{ sso_unprotected_paths }})(/|$) {
+              proxy_pass http://127.0.0.1:8080;
+              proxy_set_header Host $host;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto https;
+              proxy_read_timeout 300s;
+              client_max_body_size 0;
+              proxy_cookie_flags ~ secure samesite=none;
+              add_header Strict-Transport-Security "max-age=31536000" always;
+          }
+
+          location / {
+              error_page 401 = @custom_401;
+              auth_request /validate;
+              auth_request_set $username $upstream_http_username;
+              proxy_set_header OIDC_CLAIM_username $username;
+              proxy_pass http://127.0.0.1:8080;
+              proxy_set_header Host $host;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto https;
+              proxy_read_timeout 300s;
+              client_max_body_size 0;
+              proxy_cookie_flags ~ secure samesite=none;
+              add_header Strict-Transport-Security "max-age=31536000" always;
+          }
+      when: rspace_auth_mode == 'sso'
+
+    #  standalone mode, no SRAM login, everything is proxied to RSpace
+    - name: Deploy RSpace Nginx location for standalone login
+      blockinfile:
+        path: "{{ nginx_rspace_location_conf }}"
+        marker: "# {mark} RSPACE"
+        block: |
+          location / {
+              proxy_pass http://127.0.0.1:8080;
+              proxy_set_header Host $host;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto https;
+              proxy_read_timeout 300s;
+              client_max_body_size 0;
+              proxy_cookie_flags ~ secure samesite=none;
+              add_header Strict-Transport-Security "max-age=31536000" always;
+          }
+      when: rspace_auth_mode == 'standalone'
+
+    - name: Validate Nginx configuration
+      command: nginx -t
+      changed_when: false
+
+    - name: Reload Nginx
+      systemd:
+        name: nginx
+        state: reloaded
+
+    # ------------------------------------------------------------------
+    #  BACKDOOR SYSADMIN CREDENTIALS
+    # Printed last so they are easy to find in the deployment log.
+    # ------------------------------------------------------------------
+    - name: Show the backdoor sysadmin credentials
+      debug:
+        msg:
+          - "1. Log in to https://{{ apache_hostname }} with your SURF SRAM account."
+          - "2. Open https://{{ apache_hostname }}/adminLogin and log in with:"
+          - "   Username: {{ backdoor_admin_username }}"
+          - "   Password: {{ backdoor_admin_password }}"
+      when: rspace_auth_mode == 'sso' and not backdoor_admin_marker_stat.stat.exists
