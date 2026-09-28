@@ -205,7 +205,7 @@
     - name: Check if credentials file already exists
       stat:
         path: "{{ creds_file }}"
-      register: db_cred_file_stat
+      register: creds_file_stat
     
     - name: Generate random credentials on first deploy
       set_fact:
@@ -213,7 +213,7 @@
         db_root_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
         javamelody_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
         backdoor_admin_password: "{{ lookup('password', '/dev/null length=12 chars=ascii_letters,digits') }}"
-      when: not db_cred_file_stat.stat.exists
+      when: not creds_file_stat.stat.exists
     
     - name: Persist generated credentials to file
       copy:
@@ -224,12 +224,12 @@
           javamelody_password: "{{ javamelody_password }}"
           backdoor_admin_password: "{{ backdoor_admin_password }}"
         mode: '0600'
-      when: not db_cred_file_stat.stat.exists
+      when: not creds_file_stat.stat.exists
     
     - name: Load existing credentials from file
       include_vars:
         file: "{{ creds_file }}"
-      when: db_cred_file_stat.stat.exists
+      when: creds_file_stat.stat.exists
       
     - name: Generate backdoor password if missing from older credentials file
       set_fact:
