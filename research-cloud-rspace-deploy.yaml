@@ -497,6 +497,8 @@
     - name: Deploy RSpace Nginx location for SURF SRAM login
       blockinfile:
         path: "{{ nginx_rspace_location_conf }}"
+        create: yes
+        mode: '0644'
         marker: "# {mark} RSPACE"
         block: |
           location = /sramlogout {
@@ -535,6 +537,8 @@
     - name: Deploy RSpace Nginx location for standalone login
       blockinfile:
         path: "{{ nginx_rspace_location_conf }}"
+        create: yes
+        mode: '0644'
         marker: "# {mark} RSPACE"
         block: |
           location / {
