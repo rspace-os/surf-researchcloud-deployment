@@ -24,7 +24,7 @@
     rspace_config: "/data/{{ storage_name }}/rspace-config"
     db_cred_dir: "/data/{{ storage_name }}/.secrets/db-creds"
     researchdrive_url_default: "researchdrive.surf.nl"
-    nginx_rspace_location_conf: "/etc/nginx/app-location-conf.d/authentication.conf"  
+    nginx_rspace_location_conf: "/etc/nginx/app-location-conf.d/rspace.conf"  
     sso_unprotected_paths: "public|api|styles|scripts|resources|images|wopi|monitoring|ssoinfo|logout"  
     backdoor_admin_username: "rspacebackdoor"  
     backdoor_admin_email: "rspacebackdoor@{{ apache_hostname }}"  
