@@ -22,7 +22,7 @@
     storage_path: "/data/{{ storage_name }}"
     rspace_home: "/data/{{ storage_name }}/rspace-docker"
     rspace_config: "/data/{{ storage_name }}/rspace-config"
-    db_cred_dir: "/data/{{ storage_name }}/.secrets/db-creds"
+    creds_file: "/data/{{ storage_name }}/.secrets/db-creds"
     researchdrive_url_default: "researchdrive.surf.nl"
     nginx_rspace_location_conf: "/etc/nginx/app-location-conf.d/rspace.conf"  
     sso_unprotected_paths: "public|api|styles|scripts|resources|images|wopi|monitoring|ssoinfo|logout"  
@@ -198,13 +198,13 @@
     # ------------------------------------------------------------------
     - name: Ensure credentials directory exists
       file:
-        path: "{{ db_cred_dir | dirname }}"
+        path: "{{ creds_file | dirname }}"
         state: directory
         mode: '0700'
     
     - name: Check if credentials file already exists
       stat:
-        path: "{{ db_cred_dir }}"
+        path: "{{ creds_file }}"
       register: db_cred_file_stat
     
     - name: Generate random credentials on first deploy
@@ -217,7 +217,7 @@
     
     - name: Persist generated credentials to file
       copy:
-        dest: "{{ db_cred_dir }}"
+        dest: "{{ creds_file }}"
         content: |
           db_password: "{{ db_password }}"
           db_root_password: "{{ db_root_password }}"
@@ -228,7 +228,7 @@
     
     - name: Load existing credentials from file
       include_vars:
-        file: "{{ db_cred_dir }}"
+        file: "{{ creds_file }}"
       when: db_cred_file_stat.stat.exists
       
     - name: Generate backdoor password if missing from older credentials file
@@ -238,7 +238,7 @@
 
     - name: Persist backdoor password to credentials file
       lineinfile:
-        path: "{{ db_cred_dir }}"
+        path: "{{ creds_file }}"
         regexp: '^backdoor_admin_password:'
         line: 'backdoor_admin_password: "{{ backdoor_admin_password }}"'
       no_log: true
