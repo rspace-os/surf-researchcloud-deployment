@@ -577,4 +577,6 @@
           - "2. Open https://{{ server_hostname }}/adminLogin and log in with:"
           - "   Username: {{ backdoor_admin_username }}"
           - "   Password: {{ backdoor_admin_password }}"
+          - "   CHANGE THE BACKDOOR ADMIN PASSWORD AS SOON AS YOU LOGIN"
+          - "   You can also now create other backdoor admin accounts to be used by different users"
       when: rspace_auth_mode == 'sso' and not backdoor_admin_marker_stat.stat.exists
