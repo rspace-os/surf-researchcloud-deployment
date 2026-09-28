@@ -230,6 +230,19 @@
       include_vars:
         file: "{{ db_cred_dir }}"
       when: db_cred_file_stat.stat.exists
+      
+    - name: Generate backdoor password if missing from older credentials file
+      set_fact:
+        backdoor_admin_password: "{{ lookup('password', '/dev/null length=12 chars=ascii_letters,digits') }}"
+      when: backdoor_admin_password is not defined
+
+    - name: Persist backdoor password to credentials file
+      lineinfile:
+        path: "{{ db_cred_dir }}"
+        regexp: '^backdoor_admin_password:'
+        line: 'backdoor_admin_password: "{{ backdoor_admin_password }}"'
+      no_log: true
+
 
     # ------------------------------------------------------------------
     # Replace password defaults with the just generated ones
