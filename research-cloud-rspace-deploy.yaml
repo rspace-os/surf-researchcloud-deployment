@@ -1,4 +1,3 @@
-# PASS OPTIONS LIKE: -e "rspace_home=/home/ramon/docker-april-26-ansbile rspace_url=https://myrspaceurl.com"
 # When deployed via SURF ResearchCloud, rspace_url is injected automatically as the bare
 # workspace FQDN (e.g. myworkspace.cloud.surf.nl) the playbook will prepend https:// if needed.
 # jmelody_password, db_password and db_root_password are both auto-generated on first deploy and persisted in docker-compose.yaml.
@@ -7,7 +6,6 @@
 # storage_name must be the name of the SURF persistent volume (e.g. rspace-storage) — the mount path /data/<storage_name> is derived automatically.
 # rspace_version_gh is optional. If provided, it must follow the format x.y.z (e.g. 2.1.0), without a leading 'v'.
 # If omitted, the playbook will fetch the latest release from GitHub automatically.
-# nextcloud_base_url is hardcoded as a var at the top of this playbook, not passed as an extra-var.
 #  RSpace runs in SSO mode behind SRC-Nginx, which must come before this component in the catalog item
 # (SRC-OS, SRC-CO, SRC-Nginx, SRC-External, RSpace). SRC-Nginx handles 80/443, the certificate and the SRAM login.
 #  On first deploy a backdoor sysadmin is created and its credentials are printed at the end of the deployment log.
@@ -27,7 +25,7 @@
     nginx_rspace_location_conf: "/etc/nginx/app-location-conf.d/rspace.conf"  
     sso_unprotected_paths: "public|api|styles|scripts|resources|images|wopi|monitoring|ssoinfo|logout"  
     backdoor_admin_username: "rspacebackdoor"  
-    backdoor_admin_email: "rspacebackdoor@{{ apache_hostname }}"  
+    backdoor_admin_email: "rspacebackdoor@{{ server_hostname }}"  
     backdoor_admin_marker: "/data/{{ storage_name }}/.secrets/backdoor-admin-created"  
     src_nginx_session_cookie: "Authorization"
 
@@ -47,7 +45,12 @@
 
     - name: Derive hostnames from rspace_url
       set_fact:
-        apache_hostname: "{{ rspace_url | replace('https://', '') }}"
+        server_hostname: >-
+          {{ ('https://' ~ (
+                (rspace_url | trim)
+                | regex_replace('^[A-Za-z][A-Za-z0-9+.-]*://', '')
+                | regex_replace('^/+', '')
+             )) | urlsplit('hostname') }}
     
     - name: Derive ResearchDrive hostname from user input
       set_fact:
@@ -303,7 +306,7 @@
       replace:
         path: "{{ rspace_config }}/deployment.properties"
         regexp: 'server\.urls\.prefix=.*'
-        replace: "server.urls.prefix=https://{{ rspace_url }}"
+        replace: "server.urls.prefix=https://{{ server_hostname }}"
 
     #  Nginx proxies plain HTTP to Tomcat on loopback, so Tomcat is told the public
     # host, port and scheme to build https:// redirects and URLs.
@@ -311,7 +314,7 @@
       replace:
         path: "{{ rspace_home }}/configs/server.xml"
         regexp: '<Connector port="8080"'
-        replace: '<Connector port="8080" proxyName="{{ apache_hostname }}" proxyPort="443" scheme="https" secure="true"'
+        replace: '<Connector port="8080" proxyName="{{ server_hostname }}" proxyPort="443" scheme="https" secure="true"'
 
     - name: Expose only HTTP on localhost in docker-compose.yaml
       replace:
@@ -569,8 +572,8 @@
     - name: Show the backdoor sysadmin credentials
       debug:
         msg:
-          - "1. Log in to https://{{ apache_hostname }} with your SURF SRAM account."
-          - "2. Open https://{{ apache_hostname }}/adminLogin and log in with:"
+          - "1. Log in to https://{{ server_hostname }} with your SURF SRAM account."
+          - "2. Open https://{{ server_hostname }}/adminLogin and log in with:"
           - "   Username: {{ backdoor_admin_username }}"
           - "   Password: {{ backdoor_admin_password }}"
       when: rspace_auth_mode == 'sso' and not backdoor_admin_marker_stat.stat.exists
