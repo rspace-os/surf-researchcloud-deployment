@@ -506,6 +506,7 @@
         block: |
           location = /sramlogout {
               add_header Set-Cookie "{{ src_nginx_session_cookie }}=; Path=/; Max-Age=0; Secure; HttpOnly" always;
+              add_header Set-Cookie "JSESSIONID=; Path=/; Max-Age=0; Secure; HttpOnly" always;
               return 302 /public/ssologout;
           }
 
@@ -545,6 +546,13 @@
         mode: '0644'
         marker: "# {mark} RSPACE"
         block: |
+          rewrite ^/logout/?$ /rspacelogout last;
+          location = /rspacelogout {
+              internal;
+              add_header Set-Cookie "JSESSIONID=; Path=/; Max-Age=0; Secure; HttpOnly" always;
+              add_header Set-Cookie "{{ src_nginx_session_cookie }}=; Path=/; Max-Age=0; Secure; HttpOnly" always;
+              return 302 /;
+          }
           location / {
               proxy_pass http://127.0.0.1:8080;
               proxy_set_header Host $host;
