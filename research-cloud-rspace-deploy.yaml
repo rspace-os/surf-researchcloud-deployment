@@ -146,8 +146,8 @@
     # persist.
     # force:yes ensures that the latest gh repo is always fetched, that
     # is why d.p is moved as to not be overwritten. The db and jmelody pwds
-    # are randomly generated on each deploy so will be written into
-    # docker compose each time.
+    # are randomly generated on first deploy and written to a creds file.
+    # from there it's written to docker compose each time.
     #
     # The volumes so rspace-media and rspace-db are kept in different dir
     # to ensure they are not overwritten. It checks on first run and if
