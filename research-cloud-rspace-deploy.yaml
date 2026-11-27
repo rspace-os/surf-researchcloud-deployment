@@ -498,7 +498,6 @@
             stdin_add_newline: false
           register: backdoor_admin_hash
           changed_when: false
-          failed_when: false
           no_log: true
           when: backdoor_user_count.stdout | trim == "0"
 
