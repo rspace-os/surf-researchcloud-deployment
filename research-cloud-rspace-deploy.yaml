@@ -235,7 +235,8 @@
       include_vars:
         file: "{{ creds_file }}"
       when: creds_file_stat.stat.exists
-      
+
+      # this is incase a older deployment gets redeployed with sso (so new user account to login) and the backdoor admin never ran on the first time since that feature wasnt there
     - name: Generate backdoor password if missing from older credentials file
       set_fact:
         backdoor_admin_password: "{{ lookup('password', '/dev/null length=12 chars=ascii_letters,digits') }}"
@@ -291,11 +292,13 @@
       set_fact:
         resolved_rspace_version: "{{ rspace_version_gh if (rspace_version_gh is defined and rspace_version_gh != '') else latest_version_api.stdout }}"
 
+    # due to new rspace features and upgrades not being compatible with all features and this playbook. There is now a minimum version needed.
     - name: Validate resolved RSpace version format
       assert:
         that:
           - resolved_rspace_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
-        fail_msg: "Invalid version format '{{ resolved_rspace_version }}'. Expected format is x.y.z (e.g. 2.1.0), without a leading 'v'."
+          - resolved_rspace_version is version('2.28.0', '>=')
+        fail_msg: "Invalid RSpace version '{{ resolved_rspace_version }}'. Expected x.y.z (e.g. 2.28.0), without a leading 'v', and 2.28.0 or later."
         quiet: yes
 
     - name: Download RSpace .war file
@@ -487,13 +490,15 @@
         - name: Hash the backdoor sysadmin password with Argon2id
           command:
             argv:
-              - python3
+              - /usr/bin/python3
+              - -I
               - -c
               - "import sys; from argon2 import PasswordHasher, Type; print(PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1, hash_len=32, salt_len=16, type=Type.ID).hash(sys.stdin.read()))"
             stdin: "{{ backdoor_admin_password }}"
             stdin_add_newline: false
           register: backdoor_admin_hash
           changed_when: false
+          failed_when: false
           no_log: true
           when: backdoor_user_count.stdout | trim == "0"
 
