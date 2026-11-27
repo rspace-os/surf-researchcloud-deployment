@@ -28,6 +28,7 @@
     backdoor_admin_email: "rspacebackdoor@{{ server_hostname }}"  
     backdoor_admin_marker: "/data/{{ storage_name }}/.secrets/backdoor-admin-created"  
     src_nginx_session_cookie: "Authorization"
+    galaxy_server_alias: "Galaxy Server"
 
   tasks:
     
@@ -331,6 +332,31 @@
         regexp: "^deployment.description="
         line: "deployment.description=This version of RSpace was installed as part of a SURF catalog item on SURF Research Cloud. More information can be found under the catalog details in Research Cloud or at https://documentation.researchspace.com/research-clouds"
         state: present
+        
+    # --------------------------------------------------
+    # Galaxy setup (only runs if the URL is filled in on Research Cloud deployment)
+    # --------------------------------------------------
+
+    - name: Resolve Galaxy server URL
+      set_fact:
+        galaxy_server_url: "{{ galaxy_url | trim | regex_replace('^(?![A-Za-z][A-Za-z0-9+.-]*://)', 'https://') | regex_replace('/+$', '') }}"
+      when: galaxy_url | default('', true) | trim | length > 0
+
+    - name: Validate Galaxy server URL
+      assert:
+        that:
+          - galaxy_server_url is match('^https?://')
+          - (galaxy_server_url | urlsplit('hostname') or '') | length > 0
+        fail_msg: "Invalid galaxy_url '{{ galaxy_url }}'. Expected a URL such as https://usegalaxy.eu."
+        quiet: yes
+      when: galaxy_server_url is defined
+
+    - name: Set Galaxy server in deployment.properties
+      lineinfile:
+        path: "{{ rspace_config }}/deployment.properties"
+        regexp: '^galaxy\.server\.config='
+        line: "galaxy.server.config={{ [{'alias': galaxy_server_alias, 'url': galaxy_server_url}] | to_json }}"
+      when: galaxy_server_url is defined
 
     # ------------------------------------------------------------------
     #  SSO SETTINGS IN DEPLOYMENT.PROPERTIES
