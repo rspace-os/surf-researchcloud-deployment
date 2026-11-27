@@ -97,6 +97,7 @@
           - docker-compose-v2
           - jq
           - git
+          - python3-argon2
         state: present
 
     # ------------------------------------------------------------------
@@ -483,27 +484,52 @@
           register: backdoor_user_count
           changed_when: false
 
+        - name: Hash the backdoor sysadmin password with Argon2id
+          command:
+            argv:
+              - python3
+              - -c
+              - "import sys; from argon2 import PasswordHasher, Type; print(PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1, hash_len=32, salt_len=16, type=Type.ID).hash(sys.stdin.read()))"
+            stdin: "{{ backdoor_admin_password }}"
+            stdin_add_newline: false
+          register: backdoor_admin_hash
+          changed_when: false
+          no_log: true
+          when: backdoor_user_count.stdout | trim == "0"
+
         - name: Insert the backdoor sysadmin into the RSpace database
-          shell: >
-            docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
-            mariadb -urspacedocker -p{{ db_password }} rspace -e
-            "START TRANSACTION;
-            SET @id = GREATEST(
-              COALESCE((SELECT next_val FROM hibernate_sequences WHERE sequence_name='AbstractUserOrGroupImpl'), 1),
-              (SELECT COALESCE(MAX(id), 0) + 1 FROM User),
-              (SELECT COALESCE(MAX(id), 0) + 1 FROM rsGroup));
-            INSERT INTO User (id, version, account_expired, account_locked, contentInitialized, credentials_expired,
-              email, account_enabled, first_name, last_name, numConsecutiveLoginFailures, password, salt, username,
-              tempAccount, signupSource, creationDate, affiliation, allowedPiRole)
-            VALUES (@id, 0, b'0', b'0', b'0', b'0',
-              '{{ backdoor_admin_email }}', b'1', 'RSpace', 'Backdoor Admin', 0, '{{ backdoor_admin_password | hash('sha256') }}', NULL, '{{ backdoor_admin_username }}',
-              b'0', 'SSO_BACKDOOR', NOW(), 'SURF ResearchCloud', b'0');
-            INSERT INTO user_role (user_id, role_id) SELECT @id, id FROM roles WHERE name='ROLE_SYSADMIN';
-            UPDATE hibernate_sequences SET next_val = @id + 1 WHERE sequence_name='AbstractUserOrGroupImpl';
-            INSERT INTO hibernate_sequences (sequence_name, next_val)
-              SELECT 'AbstractUserOrGroupImpl', @id + 1 FROM DUAL
-              WHERE NOT EXISTS (SELECT 1 FROM hibernate_sequences WHERE sequence_name='AbstractUserOrGroupImpl');
-            COMMIT;"
+          command:
+            argv:
+              - docker
+              - compose
+              - -f
+              - "{{ rspace_home }}/docker-compose.yaml"
+              - exec
+              - -T
+              - rspace-db
+              - mariadb
+              - -urspacedocker
+              - "-p{{ db_password }}"
+              - rspace
+            stdin: |
+              START TRANSACTION;
+              SET @id = GREATEST(
+                COALESCE((SELECT next_val FROM hibernate_sequences WHERE sequence_name='AbstractUserOrGroupImpl'), 1),
+                (SELECT COALESCE(MAX(id), 0) + 1 FROM User),
+                (SELECT COALESCE(MAX(id), 0) + 1 FROM rsGroup));
+              INSERT INTO User (id, version, account_expired, account_locked, contentInitialized, credentials_expired,
+                email, account_enabled, first_name, last_name, numConsecutiveLoginFailures, password, salt, username,
+                tempAccount, signupSource, creationDate, affiliation, allowedPiRole)
+              VALUES (@id, 0, b'0', b'0', b'0', b'0',
+                '{{ backdoor_admin_email }}', b'1', 'RSpace', 'Backdoor Admin', 0, '{argon2@rspace_v1}{{ backdoor_admin_hash.stdout | trim }}', NULL, '{{ backdoor_admin_username }}',
+                b'0', 'SSO_BACKDOOR', NOW(), 'SURF ResearchCloud', b'0');
+              INSERT INTO user_role (user_id, role_id) SELECT @id, id FROM roles WHERE name='ROLE_SYSADMIN';
+              UPDATE hibernate_sequences SET next_val = @id + 1 WHERE sequence_name='AbstractUserOrGroupImpl';
+              INSERT INTO hibernate_sequences (sequence_name, next_val)
+                SELECT 'AbstractUserOrGroupImpl', @id + 1 FROM DUAL
+                WHERE NOT EXISTS (SELECT 1 FROM hibernate_sequences WHERE sequence_name='AbstractUserOrGroupImpl');
+              COMMIT;
+          no_log: true
           when: backdoor_user_count.stdout | trim == "0"
 
         - name: Record that the backdoor sysadmin exists
