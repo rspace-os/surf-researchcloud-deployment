@@ -362,21 +362,6 @@
         line: "galaxy.server.config={{ [{'alias': galaxy_server_alias, 'url': galaxy_server_url}] | to_json }}"
       when: galaxy_server_url is defined
 
-
-    - name: Make the Galaxy integration available in RSpace by default
-      shell: >
-        docker compose -f {{ rspace_home }}/docker-compose.yaml exec -T rspace-db
-        mariadb -urspacedocker -p{{ db_password }} rspace -N -e
-        "UPDATE SystemPropertyValue spv
-        JOIN SystemProperty sp ON spv.property_id = sp.id
-        JOIN PropertyDescriptor pd ON sp.descriptor_id = pd.id
-        SET spv.value = 'ALLOWED'
-        WHERE pd.name = 'galaxy.available' AND spv.community_id IS NULL AND spv.value <> 'ALLOWED';
-        SELECT ROW_COUNT();"
-      register: galaxy_available_update
-      changed_when: galaxy_available_update.stdout | trim != "0"
-      when: galaxy_server_url is defined
-
     # ------------------------------------------------------------------
     #  SSO SETTINGS IN DEPLOYMENT.PROPERTIES
     # RSpace reads the SRAM username from the OIDC_CLAIM_username header
@@ -486,6 +471,30 @@
         "INSERT INTO NfsFileSystem (authType, clientType, disabled, name, url, authOptions, clientOptions, readAllowlist, writeAllowlist)
         VALUES ('PASSWORD', 'SFTP', '', 'SURF Research Drive - {{ researchdrive_hostname }}', 'rspace-webdav-connector:2022', '', 'SFTP_SERVER_PUBLIC_KEY={{ researchdrive_bridge_pubkey }}', NULL, NULL);"
       when: nfs_filesystem_count.stdout | trim == "0"
+
+    - name: Make the Galaxy integration available in RSpace
+      command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ rspace_home }}/docker-compose.yaml"
+          - exec
+          - -T
+          - rspace-db
+          - sh
+          - -c
+          - 'exec mariadb -u"$MARIADB_USER" -p"$MARIADB_PASSWORD" rspace -N'
+        stdin: |
+          UPDATE SystemPropertyValue spv
+          JOIN SystemProperty sp ON spv.property_id = sp.id
+          JOIN PropertyDescriptor pd ON sp.descriptor_id = pd.id
+          SET spv.value = 'ALLOWED'
+          WHERE pd.name = 'galaxy.available' AND spv.community_id IS NULL AND spv.value <> 'ALLOWED';
+          SELECT ROW_COUNT();
+      register: galaxy_available_update
+      changed_when: galaxy_available_update.stdout | trim != "0"
+      when: galaxy_server_url is defined
 
     # ------------------------------------------------------------------
     #  BACKDOOR SYSADMIN (first deploy only)
